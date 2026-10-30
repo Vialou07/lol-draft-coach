@@ -24,14 +24,15 @@ Les données (stats, cache, groupe) sont rangées dans `%LOCALAPPDATA%\LolDraftC
    La première fois, Windows demande d'autoriser Node.js dans le pare-feu : « Autoriser » pour le téléphone.
 3. Lance LoL, entre en sélection des champions : les conseils apparaissent.
 
-Si quelque chose coince, le journal est dans `data/local/companion.log`.
+Si quelque chose coince, le journal est dans `data/local/companion.log` (ou `%LOCALAPPDATA%\LolDraftCoach` avec le .exe).
 
 ## Ce que montre la page
 
 - **Draft (ranked, normale)** : à ton ban, trois bans avec leur gain estimé ; avant et pendant ton pick,
-  tes trois meilleurs choix, avec l'écart en points face à ton champion habituel dans ce rôle, deux raisons
-  au plus (Méta, Lane, Duo, Confort) et « Contrable » si un counter courant fait mal. Ton survol dans le
-  client est noté en bas. Un tap sur une carte montre la chance de victoire estimée.
+  tes trois meilleurs choix avec leur chance de gagner, deux raisons au plus (Méta, Lane, Duo, Confort),
+  « Contrable » si un counter courant fait mal, les pièges de la draft, tes champions à apprendre, et
+  l'analyse complète (lane, autres matchups, duos, dégâts, tanks, engage, protection, durée de partie).
+  Un tap sur une carte montre le détail et l'écart face à ton champion habituel.
 - **ARAM du Chaos** : les meilleurs champions du banc que tu possèdes, comparés à ton champion actuel.
 - **Arena** : reconnue, pas encore de conseils.
 - **En partie** : quoi acheter avec tes golds, ton build habituel à ton rang (u.gg), les items que leur compo demande
@@ -47,7 +48,7 @@ Si quelque chose coince, le journal est dans `data/local/companion.log`.
   données du client contiennent parfois le survol adverse, il est ignoré exprès), les joueurs masqués en
   ranked ne sont jamais identifiés.
 - Toujours plusieurs choix, jamais un seul « prends X » (règle Riot contre les applis qui dictent).
-- Pas de winrates d'augments, rien pendant la partie.
+- Pas de winrates d'augments ; en partie, seulement le build et ce que le tableau des scores montre, sans alerte.
 - Chaque chiffre indique sa source ; ce qui n'est que du bruit n'est pas affiché.
 
 ## Données et limites
