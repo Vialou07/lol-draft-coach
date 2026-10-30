@@ -1,5 +1,6 @@
 // The companion: follows the League client, decodes champ select and serves the live page.
 
+import { readFile } from 'node:fs/promises';
 import { findClient, get, getBinary, tryGet, subscribe, TOPICS } from './lcu.mjs';
 import { draftState, draftKey } from './draft.mjs';
 import { startServer } from './server.mjs';
@@ -10,6 +11,13 @@ import { loadMayhemStats } from './stats-aram.mjs';
 import { loadChampionInfo } from './static-data.mjs';
 
 const RETRY_MS = 3000;
+// Demos replay real recorded champ selects (anonymised fixtures) so the page can be seen
+// without starting a game.
+const DEMOS = {
+  ranked: { file: 'q420-2026-10-24-03.json', queue: { id: 420, gameMode: 'CLASSIC', name: 'Classée solo/duo' } },
+  aram: { file: 'q2400-2026-10-24-40.json', queue: { id: 2400, gameMode: 'KIWI', name: 'ARAM du Chaos' } },
+};
+const DEMO_SPEED = 3;
 const DDRAGON_FALLBACK = '16.21.1';
 
 async function latestDdragon() {
@@ -58,7 +66,18 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   let stopped = false;
   let lastDraftKey = '';
 
-  const server = await startServer({ port, host, snapshot: () => state, icon });
+  let demo = null;
+  const server = await startServer({
+    port,
+    host,
+    snapshot: () => state,
+    icon,
+    actions: {
+      '/demo/ranked': () => startDemo('ranked'),
+      '/demo/aram': () => startDemo('aram'),
+      '/demo/stop': () => stopDemo(),
+    },
+  });
   const changed = () => {
     state.updatedAt = Date.now();
     server.broadcast();
@@ -74,7 +93,44 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     }
   };
 
+  const stopDemo = () => {
+    if (!demo) return {};
+    demo.cancelled = true;
+    demo = null;
+    Object.assign(state, { demo: null, draft: null, advice: null, queue: null, status: client ? 'connected' : 'no-client' });
+    lastDraftKey = '';
+    changed();
+    return {};
+  };
+
+  const startDemo = async (name) => {
+    if (state.status === 'champ-select' && !demo) return { error: 'Une vraie sélection est en cours.' };
+    if (demo) demo.cancelled = true;
+    const run = (demo = { name, cancelled: false });
+    const spec = DEMOS[name];
+    const fixture = JSON.parse(await readFile(new URL(`../test/fixtures/real/${spec.file}`, import.meta.url), 'utf8'));
+    Object.assign(state, { demo: { name, profile: Boolean(profile) }, queue: spec.queue, status: 'champ-select' });
+    lastDraftKey = '';
+    (async () => {
+      let prev = fixture.events[0].t;
+      for (const e of fixture.events) {
+        await new Promise((r) => setTimeout(r, Math.min(4000, Math.max(300, (e.t - prev) / DEMO_SPEED))));
+        prev = e.t;
+        if (run.cancelled) return;
+        state.draft = draftState(e.session, { gameMode: spec.queue.gameMode });
+        if (state.draft.timeLeftMs != null) state.draft.timeLeftMs /= DEMO_SPEED;
+        if (state.draft.phaseTotalMs != null) state.draft.phaseTotalMs /= DEMO_SPEED;
+        advise();
+        changed();
+      }
+      await new Promise((r) => setTimeout(r, 8000));
+      if (!run.cancelled) stopDemo();
+    })();
+    return { ok: true };
+  };
+
   const onSession = (session) => {
+    if (demo) stopDemo(); // a real champ select always wins over a demo
     const fresh = state.status !== 'champ-select';
     state.draft = draftState(session, { gameMode: state.queue?.gameMode });
     const key = draftKey(state.draft);
@@ -112,6 +168,8 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
 
   const onGameflow = async (client, phase) => {
     state.gameflow = phase;
+    if (demo && phase !== 'ChampSelect') return changed();
+    if (demo) stopDemo();
     if (phase === 'ChampSelect') {
       const flow = await tryGet(client, '/lol-gameflow/v1/session');
       const q = flow?.gameData?.queue;
@@ -192,7 +250,13 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
 
   // Stats can take a while to download: serve the page right away and advise once they land.
   const ready = loadInfo(state.assets.ddragon)
-    .then((i) => (info = i ?? {}))
+    .then((i) => {
+      info = i ?? {};
+      // Without the client (demo), names and pictures come from Data Dragon.
+      if (!Object.keys(state.champions).length) {
+        state.champions = Object.fromEntries(Object.entries(info).map(([key, c]) => [key, { name: c.name, alias: c.id }]));
+      }
+    })
     .then(() => loadStats({ onLog, info }))
     .then((s) => {
       stats = s ?? {};

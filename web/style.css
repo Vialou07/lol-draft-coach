@@ -126,3 +126,19 @@ main {
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* Waiting screen tiles: demo and phone pairing */
+.tile { background: var(--surface); border-radius: var(--r-card); padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+.tile-title { font-family: var(--disp); font-weight: 700; font-size: 20px; }
+.tile p { font-size: 14px; color: var(--muted); line-height: 1.4; }
+.buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+button { font: 700 14px var(--body); color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; cursor: pointer; }
+button:hover { border-color: var(--gold); }
+.tile.phone { flex-direction: row; align-items: center; gap: 14px; }
+.qr { flex: none; width: 128px; height: 128px; background: #fff; border-radius: 12px; padding: 6px; }
+.qr svg { width: 100%; height: 100%; display: block; }
+.url { font-size: 12.5px; color: var(--faint); word-break: break-all; }
+.demo-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--gold-soft); color: var(--gold); border-radius: 12px; padding: 8px 8px 8px 12px; font-size: 13px; font-weight: 600; }
+.demo-bar button { padding: 6px 10px; font-size: 13px; }
+.abs div + div { margin-top: 3px; }
+.abs b { color: var(--text); }

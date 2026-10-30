@@ -85,12 +85,11 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
 
 function option(s, reference) {
   const half = 1.2816 * Math.sqrt(s.variance) * s.p * (1 - s.p);
-  const vs = reference !== s ? reference : null;
-  const reasons = Object.entries(s.terms)
-    .map(([k, v]) => ({ label: LABELS[k], delta: toPoints(v - (vs ? vs.terms[k] : 0), s.p) / 100 }))
-    .filter((r) => Math.abs(r.delta) >= 0.01)
-    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
-    .slice(0, 2);
+  const all = Object.entries(s.terms)
+    .map(([k, v]) => ({ label: LABELS[k], delta: toPoints(v, s.p) / 100 }))
+    .filter((r) => Math.abs(r.delta) >= 0.005)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  const reasons = all.filter((r) => Math.abs(r.delta) >= 0.01).slice(0, 2);
   const record = s.personalGames ? ` · ${s.personalWins}/${s.personalGames} pour toi` : '';
   return {
     championId: Number(s.key),
@@ -100,6 +99,8 @@ function option(s, reference) {
     high: Math.min(1, s.p + half),
     n: s.games,
     reasons,
+    detail: all,
+    vsId: reference !== s ? Number(reference.key) : null,
     tag: `${s.tag}${record}`,
   };
 }

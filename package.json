@@ -9,8 +9,11 @@
     "test": "node --test test/*.test.mjs",
     "demo": "node test/demo.mjs"
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
+    "qrcode-generator": "1.4.4",
     "ws": "8.18.0"
   }
 }

@@ -52,7 +52,8 @@ if (!app) {
 const local = `http://localhost:${app.port}`;
 console.log(`\nLoL Draft Coach est lancé.`);
 console.log(`  Sur ce PC      : ${local}`);
-for (const url of lanUrls(app.port)) console.log(`  Sur ton tél.   : ${url}  (même Wi-Fi)`);
+const phone = lanUrls(app.port)[0];
+if (phone) console.log(`  Sur ton tél.   : ${phone}  (même Wi-Fi, ou scanne le QR code sur la page)`);
 console.log(`\nLance LoL quand tu veux, la page se met à jour toute seule. Ctrl+C pour quitter.\n`);
 
 open(local);

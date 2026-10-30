@@ -176,7 +176,7 @@ function scoreCandidate({ model, profile, allies, enemies, assignments, taken, s
 // A reason is shown only when it is worth at least a point and clearly above its own noise.
 // Against a reference champion, each reason is the gap on that criterion, so they explain the
 // big number; without one (locked pick, the reference itself) they compare to an average pick.
-function reasons(s, ref) {
+function reasons(s, ref, max = 2, minPts = 1) {
   const vs = ref && ref !== s ? ref : null;
   return Object.keys(s.terms)
     .map((k) => {
@@ -184,10 +184,10 @@ function reasons(s, ref) {
       const variance = (s.vars[k] ?? 0) + (vs ? vs.vars[k] ?? 0 : 0);
       return { k, v, sd: Math.sqrt(variance) };
     })
-    .filter(({ v, sd }) => Math.abs(toPoints(v, s.p)) >= 1 && Math.abs(v) >= 1.28 * sd)
+    .filter(({ v, sd }) => Math.abs(toPoints(v, s.p)) >= minPts && Math.abs(v) >= 1.28 * sd)
     .map(({ k, v }) => ({ label: LABELS[k], delta: toPoints(v, s.p) / 100 }))
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
-    .slice(0, 2);
+    .slice(0, max);
 }
 
 function option(s, reference) {
@@ -202,7 +202,9 @@ function option(s, reference) {
     low: Math.max(0, s.p - half),
     high: Math.min(1, s.p + half),
     n: s.games,
-    reasons: reasons(s, reference),
+    reasons: reasons(s, null),
+    detail: reasons(s, null, 6, 0.5),
+    vsId: reference && reference !== s ? Number(reference.key) : null,
     games: s.mastery.games,
     tag: s.mastery.experience < 1 ? 'Nouveau' : s.mastery.games ? `${s.mastery.games} parties` : 'Ton pool',
     warn,

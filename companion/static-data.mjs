@@ -6,7 +6,7 @@ const DIR = new URL('../data/local/', import.meta.url);
 
 export function championInfo(ddragon) {
   return Object.fromEntries(
-    Object.values(ddragon.data).map((c) => [c.key, { id: c.id, difficulty: c.info?.difficulty ?? 5, tags: c.tags ?? [], defense: c.info?.defense ?? 0 }]),
+    Object.values(ddragon.data).map((c) => [c.key, { id: c.id, name: c.name, difficulty: c.info?.difficulty ?? 5, tags: c.tags ?? [], defense: c.info?.defense ?? 0 }]),
   );
 }
 

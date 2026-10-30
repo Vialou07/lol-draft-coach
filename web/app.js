@@ -11,13 +11,15 @@ const COLS = ['top', 'jungle', 'mid', 'bot', 'support'];
 const COL_LABELS = { top: 'TOP', jungle: 'JGL', mid: 'MID', bot: 'ADC', support: 'SUP' };
 const ROLE_NAMES = { top: 'Top', jungle: 'Jungle', mid: 'Mid', bot: 'ADC', support: 'Support' };
 const DDRAGON = '16.21.1';
-const SCALE_PTS = 8; // margin bars share one scale: ±8 points
+const SCALE = [0.4, 0.6]; // margin bars share one scale: 40 to 60 % win chance
 const LEGAL = 'LoL Draft Coach isn’t endorsed by Riot Games and doesn’t reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.';
+const onPc = ['localhost', '127.0.0.1'].includes(location.hostname);
 
 let state = null;
 let lastKey = '';
 let deadline = null;
 let phaseTotal = null;
+let phone = null;
 const opened = new Set();
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -63,7 +65,18 @@ function renderWaiting() {
     const text = { Matchmaking: 'Recherche de partie', ReadyCheck: 'Partie trouvée', Lobby: 'Dans le salon' }[state.gameflow] ?? 'Connecté';
     body = `<div class="pulse ok"></div><h1>${text}</h1><p>Les conseils apparaissent dès la sélection des champions.</p>`;
   }
-  return `<section class="wait">${body}</section>${who}<p class="legal">${LEGAL}</p>`;
+  const demo = `<section class="tile">
+      <div class="tile-title">Voir une démo</div>
+      <p>Rejoue une de tes vraies sélections, pour voir l'écran avant une partie.</p>
+      <div class="buttons"><button data-demo="ranked">Ranked solo</button><button data-demo="aram">ARAM du Chaos</button></div>
+    </section>`;
+  const qr = onPc && phone?.qr
+    ? `<section class="tile phone"><div class="qr">${phone.qr}</div><div>
+        <div class="tile-title">Sur ton téléphone</div>
+        <p>Scanne ce code avec l'appareil photo, sur le même Wi-Fi. Ensuite « Ajouter à l'écran d'accueil » et c'est réglé.</p>
+        <p class="url">${esc(phone.url)}</p></div></section>`
+    : '';
+  return `<section class="wait">${body}</section>${who}${demo}${qr}<p class="legal">${LEGAL}</p>`;
 }
 
 function pic(id, { hover = false, me = false, empty = false } = {}) {
@@ -101,27 +114,33 @@ function renderGrid(d, a) {
 }
 
 function card(o, { flat = false, ref = false } = {}) {
-  const value = o.gain ?? o.delta;
-  const showNumber = value != null && !flat;
-  const half = o.p != null && o.high != null ? (o.high - o.low) / 2 : 0;
-  const pos = (x) => Math.max(0, Math.min(100, 50 + (x * 100 * 50) / SCALE_PTS));
-  const margin = showNumber && o.gain == null
-    ? `<div class="margin"><i style="left:${pos(value - half)}%;right:${100 - pos(value + half)}%"></i><b style="left:${pos(value)}%"></b></div>`
+  const isBan = o.gain != null;
+  const showNumber = !flat && (isBan || o.p != null);
+  const pos = (x) => Math.max(0, Math.min(100, ((x - SCALE[0]) / (SCALE[1] - SCALE[0])) * 100));
+  const number = isBan
+    ? `<span class="big ${trend(o.gain, 0.05)}">${pts(o.gain)}<small>pt</small></span>`
+    : `<span class="big">${Math.round(o.p * 100)}<small>%</small></span>`;
+  const margin = showNumber && !isBan && o.low != null
+    ? `<div class="margin"><i style="left:${pos(o.low)}%;right:${100 - pos(o.high)}%"></i><b style="left:${pos(o.p)}%"></b></div>`
     : '';
   const chips = (o.reasons ?? []).map((r) => `<span class="chip ${trend(r.delta)}">${esc(r.label)}<b>${pts(r.delta)}</b></span>`).join('');
   // A long tag (bans) moves to the second line so the name never gets cut.
   const tagInTitle = chips || (o.tag ?? '').length <= 12;
-  const abs = o.p != null
-    ? `<div class="abs">Chance de victoire estimée ${pct(o.p)} (entre ${pct(o.low)} et ${pct(o.high)})${o.n ? ` · ${o.n.toLocaleString('fr-FR')} parties analysées` : ''}</div>`
+  const detail = !isBan && o.p != null
+    ? `<div class="abs">
+        ${o.vsId && o.delta != null ? `<div><b>${pts(o.delta)} pt</b> face à ${esc(champName(o.vsId))}</div>` : ''}
+        ${(o.detail ?? []).length ? `<div>${o.detail.map((r) => `${esc(r.label)} ${pts(r.delta)}`).join(' · ')}</div>` : ''}
+        <div>Entre ${pct(o.low)} et ${pct(o.high)}${o.n ? ` · ${o.n.toLocaleString('fr-FR')} parties analysées` : ''}</div>
+      </div>`
     : '';
   return `<article class="card ${ref ? 'ref' : ''} ${opened.has(o.championId) ? 'open' : ''}" data-id="${o.championId}">
     ${o.close ? '<span class="eq">≈ égalité</span>' : ''}
     ${img(o.championId, 'portrait')}
     <div class="title"><span class="name">${esc(champName(o.championId))}</span>${tagInTitle ? `<span class="tag">${esc(o.tag ?? '')}</span>` : ''}</div>
-    <div class="num">${showNumber ? `<span class="big ${trend(value, 0.5)}">${pts(value)}<small>pt</small></span>${margin}` : ''}</div>
+    <div class="num">${showNumber ? `${number}${margin}` : ''}</div>
     <div class="chips">${tagInTitle ? chips : `<span class="tag">${esc(o.tag)}</span>`}</div>
     ${o.warn ? `<div class="warn">${esc(o.warn)}</div>` : ''}
-    ${abs}
+    ${detail}
   </article>`;
 }
 
@@ -130,10 +149,10 @@ function renderAdvice(d, a) {
   if (!a.options?.length) return a.note ? `<p class="note">${esc(a.note)}</p>` : '';
   const flat = Boolean(a.flat);
   let title = 'Tes meilleurs choix';
-  let right = a.reference ? `vs ${a.reference.label}` : '';
+  let right = 'chance de gagner';
   if (d.myTurn === 'ban') [title, right] = ['Bans conseillés', 'gain estimé'];
   if (d.kind === 'aram') title = 'Sur le banc';
-  if (a.verb === 'Verrouillé') [title, right] = ['Ton champion', ''];
+  if (a.verb === 'Verrouillé') title = 'Ton champion';
   if (a.allClose) right = '≈ les 3 se valent';
   if (flat) right = '';
   const cards = a.options.map((o) => card(o, { flat })).join('');
@@ -156,7 +175,10 @@ function render() {
   const h = headline(d, a, me);
   const mode = state.queue?.name || QUEUES[d.queueId] || 'Partie';
   const sub = [ROLE_NAMES[me?.role], mode].filter(Boolean).join(' · ');
-  app.innerHTML = `
+  const demo = state.demo
+    ? `<div class="demo-bar"><span>Démo : une de tes vraies sélections${state.demo.profile ? ', avec ton profil' : ', sans ton profil (client fermé)'}</span><button data-demo="stop">Arrêter</button></div>`
+    : '';
+  app.innerHTML = `${demo}
     <header class="head">
       <div><h1 class="${h.mine ? 'mine' : ''} ${h.text.length > 14 ? 'long' : ''}">${esc(h.text)}</h1><div class="sub"><i class="dot"></i>${esc(sub)}</div></div>
       <div class="ring" id="ring"><svg viewBox="0 0 58 58"><circle class="track" cx="29" cy="29" r="25"/><circle class="left" cx="29" cy="29" r="25" stroke-dasharray="157.1" stroke-dashoffset="0"/></svg><span></span></div>
@@ -167,8 +189,13 @@ function render() {
   tick();
 }
 
-// A tap shows the absolute win chance; it stays open across live updates.
 app.addEventListener('click', (e) => {
+  const button = e.target.closest('[data-demo]');
+  if (button) {
+    fetch(`/demo/${button.dataset.demo}`, { method: 'POST' });
+    return;
+  }
+  // A tap shows the details of a card; it stays open across live updates.
   const el = e.target.closest('.card');
   if (!el) return;
   const id = Number(el.dataset.id);
@@ -204,7 +231,7 @@ function onState(next) {
     deadline = null;
   }
   if (!d) opened.clear();
-  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, d && { ...d, timeLeftMs: 0 }, state.advice]);
+  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url]);
   if (key !== lastKey) {
     lastKey = key;
     render();
@@ -221,5 +248,14 @@ function connect() {
   };
 }
 
+if (onPc) {
+  fetch('/phone')
+    .then((r) => r.json())
+    .then((p) => {
+      phone = p;
+      if (state) onState(state);
+    })
+    .catch(() => {});
+}
 render();
 connect();
