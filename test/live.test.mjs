@@ -75,3 +75,27 @@ test('the recap of a real game: ten players, your line, damage, healing and your
   for (const id of mine.augments) assert.ok(recap.augments[id]?.name && recap.augments[id].icon.startsWith('https://raw.communitydragon.org/'));
   assert.equal(gameRecap(detail, { puuid: 'nobody' }), null);
 });
+
+test('roles: measured on real games when known, the client tags otherwise; two threats per team', async () => {
+  const { compactMayhemDb } = await import('../companion/stats-mayhem-db.mjs');
+  const { rolesOf, teamRoles, augmentAdvice } = await import('../companion/roles.mjs');
+  const tier = { patch_prefix: '16.21', champs: {
+    3: { wr: 0.51, g: 42550, comp: { phys: 275, magic: 1312, true: 124, front: 2.8, engage: 1.19, poke: 0.6, sustain: 1.57, cc: 2.73, damage: 0.43 } },
+    96: { wr: 0.5, g: 30000, comp: { phys: 643, magic: 1361, true: 376, front: 0.56, engage: 0.22, poke: 2.7, sustain: 0.47, cc: 0.74, damage: 2.77 } },
+  } };
+  const augmentStats = { 3: { kPrismatic: [{ id: 1, g: 9000, wr: 0.56, lift: 0.05 }, { id: 2, g: 100, wr: 0.7, lift: 0.2 }, { id: 3, g: 5000, wr: 0.49, lift: -0.02 }] } };
+  const db = compactMayhemDb(tier, augmentStats);
+  assert.deepEqual(db.champs[3].games, 42550);
+  assert.deepEqual(rolesOf('3', { db }), ['Tank', 'Contrôles']);
+  assert.deepEqual(rolesOf('96', { db }).sort(), ['Gros dégâts', 'Poke']);
+  assert.deepEqual(db.augments[3].kPrismatic.map((a) => a.id), [1], 'too few games or no gain: left out');
+  const advice = augmentAdvice('3', { db, names: { 1: { name: 'Goliath', icon: null } } });
+  assert.equal(advice.byRarity.kPrismatic[0].name, 'Goliath');
+  const roles = teamRoles(live, { items, db, keyOf: (p) => (p.championName === 'Galio' ? '3' : null) });
+  for (const team of [roles.allies, roles.enemies]) {
+    assert.equal(team.length, 5);
+    assert.equal(team.filter((x) => x.top).length, 2, 'two threats per team');
+    assert.ok(Math.abs(team.reduce((s, x) => s + x.threat, 0) - 1) < 1e-9, 'shares add up to the team');
+  }
+  assert.ok(roles.allies.find((x) => x.me).roles.includes('Tank'));
+});
