@@ -1,23 +1,23 @@
 // ARAM and ARAM Mayhem advice: keep your champion or take one from the bench.
-// Enemies are hidden until loading, so a choice only depends on the champion's strength in
-// the mode, your own record with it, and the balance of your team. The number shown is the
-// champion's winrate in the mode (what tier lists show), moved by your record and your team.
+// Enemies are hidden until loading. The number shown is the champion's winrate in the mode, as
+// the source publishes it, and the advice follows it alone: a swap only for at least a point.
+// What a champion brings to your team (the missing tank, the other damage type) is written
+// next to it, never mixed into the number. The source's tiers weigh popularity (tier C goes up
+// to 54 %, tier A down to 49 %), so they are not shown next to a winrate they contradict.
+// Your own record is left out: the client only keeps your last 20 games.
 
-import { createDraftModel, sigmoid, toPoints } from './model-draft.mjs';
+import { createDraftModel, sigmoid } from './model-draft.mjs';
 
-const N0_MODE = 1000; // pseudo-games pulling a mode winrate towards 50 % [assumption]
+const N0_MODE = 1000; // pseudo-games pulling a counted mode winrate towards 50 % [assumption]
 const ASSUMED_GAMES = 3000; // the source publishes no sample size, only for the range [assumption]
-const N0_PERSONAL = 40; // a personal record over a few games is mostly noise
-const NO_FRONTLINE = -0.08; // logit, about −2 points for a team without any tank [assumption]
-const SWITCH_THRESHOLD = 0.01; // advise a bench swap only above one point of win chance
-const LABELS = { mode: 'Mode', personal: 'Ton bilan', comp: 'Compo', front: 'Tank' };
+const SWITCH_THRESHOLD = 0.01; // advise a bench swap only above one point of winrate
+const PHYSICAL_TEAM = 0.7; // average physical share above which a team lacks magic damage
 
 let srCache = { stats: null, model: null };
 
-export function recommendAram(draft, { stats, profile, info = {}, names = {}, srStats, owned }) {
+export function recommendAram(draft, { stats, info = {}, srStats, owned }) {
   const me = draft.allies.find((p) => p.me);
   if (!me?.championId) return { options: [], note: 'En attente de ton champion...' };
-  const queue = String(draft.queueId);
   if (srStats && srCache.stats !== srStats) srCache = { stats: srStats, model: createDraftModel(srStats) };
   const sr = srStats ? srCache.model : null;
 
@@ -25,13 +25,9 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
   // are, so the number matches the tier list. Counted samples are pulled towards 50 %.
   const mode = (key) => {
     const rec = stats?.champs?.[key];
-    if (!rec) return { value: 0, variance: 0, games: 0, tier: null };
+    if (!rec) return { value: 0, variance: 0, games: 0 };
     const p = rec.games ? (rec.wr * rec.games + N0_MODE * 0.5) / (rec.games + N0_MODE) : rec.wr;
-    return { value: Math.log(p / (1 - p)), variance: 4 / ((rec.games ?? ASSUMED_GAMES) + N0_MODE), games: rec.games ?? 0, tier: rec.tier ?? null };
-  };
-  const personal = (key) => {
-    const q = profile?.champions?.[key]?.byQueue?.[queue] ?? { games: 0, wins: 0 };
-    return { value: (q.wins - 0.5 * q.games) / (0.25 * q.games + N0_PERSONAL), variance: q.games ? 1 / (0.25 * q.games + N0_PERSONAL) : 0, games: q.games, wins: q.wins };
+    return { value: Math.log(p / (1 - p)), variance: 4 / ((rec.games ?? ASSUMED_GAMES) + N0_MODE), games: rec.games ?? 0 };
   };
   // Physical damage share from the champion's main Summoner's Rift role, when available.
   const phys = (key) => {
@@ -43,20 +39,23 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
   const isFront = (key) => (info[key]?.tags ?? []).includes('Tank') || (info[key]?.defense ?? 0) >= 7;
 
   const teammates = draft.allies.filter((p) => !p.me && p.championId).map((p) => String(p.championId));
-  const comp = (key) => {
-    const shares = [...teammates, key].map(phys).filter((x) => x != null);
-    const balance = sr && phys(key) != null ? sr.compTerm(shares) - sr.compTerm(shares.slice(0, -1)) : 0;
-    const front = teammates.some(isFront) ? 0 : isFront(key) ? -NO_FRONTLINE : 0;
-    return { balance, front };
+  // What a champion would bring that the team lacks, in words.
+  const teamPhys = teammates.map(phys).filter((x) => x != null);
+  const avgPhys = teamPhys.length >= 3 ? teamPhys.reduce((a, b) => a + b, 0) / teamPhys.length : null;
+  const brings = (key) => {
+    const out = [];
+    if (teammates.length >= 2 && !teammates.some(isFront) && isFront(key)) out.push('le tank qui vous manque');
+    const own = phys(key);
+    if (avgPhys != null && own != null) {
+      if (avgPhys > PHYSICAL_TEAM && own < 0.4) out.push('l’AP qui vous manque');
+      if (avgPhys < 1 - PHYSICAL_TEAM && own > 0.6) out.push('l’AD qui vous manque');
+    }
+    return out;
   };
 
   const score = (key, tag) => {
     const m = mode(key);
-    const p = personal(key);
-    const c = comp(key);
-    const terms = { mode: m.value, personal: p.value, comp: c.balance, front: c.front };
-    const total = Object.values(terms).reduce((s, x) => s + x, 0);
-    return { key, tag, p: sigmoid(total), variance: m.variance + p.variance, terms, games: m.games, tier: m.tier, personalGames: p.games, personalWins: p.wins };
+    return { key, tag, p: sigmoid(m.value), variance: m.variance, games: m.games, brings: brings(key) };
   };
 
   const mine = { ...score(String(me.championId), 'Ton champion'), mine: true };
@@ -96,12 +95,12 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
 
   const sourceNote = stats?.source
     ? `Stats ${stats.source}${stats.version ? `, patch ${stats.version}` : ''}.`
-    : 'Pas de winrates publics pour ce mode : conseil basé sur ta compo et ton bilan perso.';
+    : 'Pas de winrates publics pour ce mode : rien ne départage ces champions.';
   return {
     verb: swap ? 'Prends' : 'Garde',
     focus: Number(focus.key),
     reference: { championId: Number(mine.key), label: 'ton champion' },
-    options: shown.map((x) => ({ ...option(x, mine), close: x !== focus && focus.p - x.p < SWITCH_THRESHOLD })),
+    options: shown.map((x) => option(x, mine)),
     current: option(mine, mine),
     analysis,
     analysisFor,
@@ -112,13 +111,6 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
 
 function option(s, reference) {
   const half = 1.2816 * Math.sqrt(s.variance) * s.p * (1 - s.p);
-  const all = Object.entries(s.terms)
-    .filter(([k]) => k !== 'mode') // the mode winrate is the number itself
-    .map(([k, v]) => ({ label: LABELS[k], delta: toPoints(v, s.p) / 100 }))
-    .filter((r) => Math.abs(r.delta) >= 0.005)
-    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
-  const reasons = all.filter((r) => Math.abs(r.delta) >= 0.01).slice(0, 2);
-
   return {
     championId: Number(s.key),
     delta: s.p - reference.p,
@@ -126,12 +118,9 @@ function option(s, reference) {
     low: Math.max(0, s.p - half),
     high: Math.min(1, s.p + half),
     n: s.games,
-    reasons,
-    detail: all,
     vsId: reference !== s ? Number(reference.key) : null,
     tag: s.tag,
-    record: s.personalGames ? { wins: s.personalWins, games: s.personalGames } : null,
-    tier: s.tier,
+    brings: s.brings,
     mine: Boolean(s.mine),
   };
 }

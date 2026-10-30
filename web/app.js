@@ -186,8 +186,6 @@ function renderGrid(d, a) {
   return `<section class="grid">${head}<div class="rl">NOUS</div>${ours}<div class="rl">EUX</div>${theirs}</section>`;
 }
 
-const TIERS = { 'S+': 'up', S: 'up', A: 'amber', B: 'flat', C: 'down', D: 'down' };
-
 function card(o, { flat = false, ref = false, best = false, precise = false } = {}) {
   const isBan = o.gain != null;
   const showNumber = !flat && (isBan || o.p != null);
@@ -198,18 +196,14 @@ function card(o, { flat = false, ref = false, best = false, precise = false } = 
   const gauge = showNumber && !isBan
     ? `<div class="gauge ${best ? 'best' : ''}"><i class="range" style="left:${pos(o.low ?? o.p)}%;right:${100 - pos(o.high ?? o.p)}%"></i><i class="fill" style="width:${pos(o.p)}%"></i><i class="mid" style="left:${pos(0.5)}%"></i></div>`
     : '';
-  const chips = [
-    o.tier ? `<span class="chip tier ${TIERS[o.tier] ?? 'flat'}">Tier <b>${esc(o.tier)}</b></span>` : '',
-    ...(o.reasons ?? []).map((r) => `<span class="chip ${trend(r.delta)}">${esc(r.label)}<b>${pts(r.delta)}</b></span>`),
-    o.record ? `<span class="chip">toi <b>${o.record.wins} V ${o.record.games - o.record.wins} D</b></span>` : '',
-  ].join('');
+  const chips = (o.reasons ?? []).map((r) => `<span class="chip ${trend(r.delta)}">${esc(r.label)}<b>${pts(r.delta)}</b></span>`).join('');
   // A long tag (bans) moves to the second line so the name never gets cut.
   const tagInTitle = chips || (o.tag ?? '').length <= 12;
   const detail = !isBan && o.p != null
     ? `<div class="abs">
         ${o.vsId && o.delta != null ? `<div><b>${pts(o.delta)} pt</b> face à ${esc(champName(o.vsId))}</div>` : ''}
         ${(o.detail ?? []).length ? `<div>${o.detail.map((r) => `${esc(r.label)} ${pts(r.delta)}`).join(' · ')}</div>` : ''}
-        <div>Entre ${pct(o.low)} et ${pct(o.high)}${o.n ? ` · ${o.n.toLocaleString('fr-FR')} parties analysées` : ''}</div>
+        ${o.high - o.low > 0.001 ? `<div>Entre ${pct(o.low)} et ${pct(o.high)}${o.n ? ` · ${o.n.toLocaleString('fr-FR')} parties analysées` : ''}</div>` : ''}
       </div>`
     : '';
   return `<article class="card ${ref ? 'ref' : ''} ${o.mine ? 'mine' : ''} ${opened.has(o.championId) ? 'open' : ''}" data-id="${o.championId}">
@@ -458,7 +452,7 @@ function renderAdvice(d, a) {
   const best = (o) => (aram ? o.championId === a.focus : o.p != null && o.p === topP) && a.options.length > 1;
   const cards = a.options.map((o) => card(o, { flat, best: best(o), precise: aram })).join('');
   const legend = aram
-    ? '<p class="legend">Winrate du champion en ARAM du Chaos (tier S+ = les plus forts), ajusté à ton bilan et à ce qui manque à ton équipe. Le premier est le conseil ; « ≈ égalité » = à moins d’un point, prends celui que tu préfères.</p>'
+    ? '<p class="legend">Winrate de chaque champion dans le mode, tel que la source le publie. On ne te conseille de changer que pour au moins un point de plus.</p>'
     : !flat && d.myTurn !== 'ban' && a.options.some((o) => o.p != null)
       ? '<p class="legend">Ligne blanche = 50 %. Un point de plus = une victoire de plus sur 100 parties. Entre deux bons choix, l’écart est souvent de 1 à 4 points.</p>'
       : '';
@@ -473,6 +467,18 @@ function renderAdvice(d, a) {
     main: `<div class="label"><span>${title}</span><b>${esc(right)}</b></div>${cards}${legend}${refCard}`,
     side: `${renderAvoid(a)}${renderLearn(a)}${renderAnalysis(a.analysis)}${note}`,
   };
+}
+
+// ARAM: why keep or take, in one line, from the numbers on the cards.
+function aramWhy(a) {
+  const focus = a?.options?.find((o) => o.championId === a.focus);
+  const mine = a?.options?.find((o) => o.mine);
+  if (!focus || !mine || a.flat) return '';
+  const gap = (x) => `${pts(x)} pt${x >= 0.0195 ? 's' : ''}`;
+  if (a.verb === 'Prends') return `${gap(focus.p - mine.p)} sur ${champName(mine.championId)}, sur le banc avant les autres`;
+  const next = a.options.filter((o) => !o.mine && !o.takenBy).sort((x, y) => y.p - x.p)[0];
+  if (next && next.p > mine.p) return `${champName(next.championId)} à peine mieux (${gap(next.p - mine.p)}) : comme tu préfères`;
+  return 'rien de mieux sur le banc';
 }
 
 function render() {
@@ -501,8 +507,7 @@ function render() {
   const me = d.allies.find((p) => p.me);
   const h = headline(d, a, me);
   const mode = state.queue?.name || QUEUES[d.queueId] || 'Partie';
-  const aramWhere = d.kind === 'aram' && a?.focus ? (a.verb === 'Prends' ? 'sur le banc, avant les autres' : 'ton champion actuel') : '';
-  const sub = [ROLE_NAMES[me?.role], aramWhere, mode].filter(Boolean).join(' · ');
+  const sub = [ROLE_NAMES[me?.role], d.kind === 'aram' ? aramWhy(a) : '', mode].filter(Boolean).join(' · ');
   const who = state.demo?.profile === 'real' ? 'ton profil' : 'un profil d’exemple (ouvre le client LoL pour le tien)';
   const demo = !state.demo
     ? ''

@@ -122,15 +122,31 @@ test('ARAM Mayhem: every real game gets a keep-or-swap advice over my champion a
   assert.ok(swaps > 0, 'some games suggest a swap');
 });
 
-test('ARAM: a personal record on a champion moves it, shrunk towards neutral', () => {
+test('ARAM: the number is the mode winrate as published, a personal record does not move it', () => {
   const g = read('./fixtures/real/q2400-2026-10-25-50.json');
   const draft = draftState(g.events.at(-1).session);
   const benchId = draft.bench[0];
-  const strong = { champions: { [benchId]: { byQueue: { 2400: { games: 20, wins: 16 } } } } };
-  const advice = recommend(draft, { stats, profile: strong, champions, info });
-  const o = advice.options.find((x) => x.championId === benchId) ?? advice.current;
-  const pts = o.reasons.find((r) => r.label === 'Ton bilan').delta * 100;
-  assert.ok(pts > 2 && pts < 6, `16/20 should be worth a few points, not 30: ${pts}`);
+  const record = { champions: { [benchId]: { byQueue: { 2400: { games: 3, wins: 0 } } } } };
+  for (const profile of [{}, record]) {
+    const advice = recommend(draft, { stats, profile, champions, info });
+    for (const o of advice.options) {
+      const wr = stats.mayhem.champs[o.championId]?.wr;
+      if (wr) assert.ok(Math.abs(o.p - wr) < 1e-9, `${o.championId}: ${o.p} shown for ${wr}`);
+      assert.equal(o.tier, undefined, 'no tier next to the winrate');
+    }
+  }
+});
+
+test('ARAM: tonight’s Galio select, a bench champion less than a point better is not worth a swap', () => {
+  const g = read('./fixtures/real/q2400-2026-10-30-75.json');
+  const draft = draftState(g.events[12].session); // Galio after a trade, Poppy (+0.8) on the bench
+  const advice = recommend(draft, { stats, profile: {}, champions, info });
+  assert.equal(advice.verb, 'Garde');
+  assert.equal(advice.focus, 3);
+  assert.equal(advice.options[0].championId, 3, 'the advice comes first');
+  const early = recommend(draftState(g.events[10].session), { stats, profile: {}, champions, info });
+  assert.equal(early.verb, 'Prends', 'Ekko back on the bench is worth the swap');
+  assert.equal(early.focus, 245);
 });
 
 test('ARAM Mayhem: with mode winrates, a much stronger bench champion is advised, an unowned one is not', () => {
@@ -146,7 +162,7 @@ test('ARAM Mayhem: with mode winrates, a much stronger bench champion is advised
   const advice = recommend(draft, { stats, profile: {}, champions, info });
   assert.equal(advice.verb, 'Prends');
   assert.equal(advice.options[0].championId, Number(strong));
-  assert.ok(Math.abs(advice.options[0].p - stats.mayhem.champs[strong].wr) < 0.03, 'the number is close to the mode winrate');
+  assert.ok(Math.abs(advice.options[0].p - stats.mayhem.champs[strong].wr) < 1e-9, 'the number is the mode winrate');
   assert.ok(advice.options.some((o) => o.mine && o.championId === Number(weak)), 'my champion stays shown for comparison');
   const notOwned = recommend(draft, { stats, profile: {}, champions, info, owned: [Number(weak), Number(second)] });
   assert.equal(notOwned.options[0].championId, Number(second), 'unowned bench champion skipped');

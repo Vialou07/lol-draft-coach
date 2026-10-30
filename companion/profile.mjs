@@ -7,7 +7,36 @@ import { dataFile } from './paths.mjs';
 const PAGE = 20;
 const MAX_GAMES = 200;
 const SR_QUEUES = new Set([400, 420, 430, 440, 480, 490, 700]);
+const REMAKE_SECONDS = 240;
 const matchupCache = () => dataFile('history-matchups.json');
+const historyFile = () => dataFile('history.json');
+
+// A remake (early surrender in the first minutes) is neither a win nor a loss.
+const isRemake = (g) => Boolean(g.participants?.[0]?.stats?.gameEndedInEarlySurrender) || (g.gameDuration > 0 && g.gameDuration < REMAKE_SECONDS);
+
+// The client only serves your last 20 games: each one read is kept here, per account, so your
+// record grows past that window. Row: gameId -> [queueId, championId, win (1/0), gameCreation].
+async function keptHistory(games, owner) {
+  let all = {};
+  try {
+    all = JSON.parse(await readFile(historyFile(), 'utf8'));
+  } catch {
+    // first run
+  }
+  const kept = (all[owner] ??= {});
+  let added = 0;
+  for (const g of games) {
+    const p = g.participants?.[0];
+    if (!p || isRemake(g) || kept[g.gameId]) continue;
+    kept[g.gameId] = [g.queueId, p.championId, p.stats?.win ? 1 : 0, g.gameCreation ?? 0];
+    added++;
+  }
+  if (added) {
+    await mkdir(dataFile(), { recursive: true });
+    await writeFile(historyFile(), JSON.stringify(all));
+  }
+  return Object.entries(kept).map(([gameId, [queueId, championId, win]]) => ({ gameId, queueId, championId, win }));
+}
 
 async function recentGames(client, who, max) {
   const games = [];
@@ -36,7 +65,7 @@ function laneOf(p) {
 
 // Your own lane matchups: for each Summoner's Rift game, your champion, your lane opponent's
 // and the result. Game details are fetched once and kept locally.
-async function laneMatchups(client, games, puuid) {
+async function laneMatchups(client, games, puuid, keep) {
   let cache = {};
   try {
     cache = JSON.parse(await readFile(matchupCache(), 'utf8'));
@@ -58,7 +87,7 @@ async function laneMatchups(client, games, puuid) {
     await mkdir(dataFile(), { recursive: true });
     await writeFile(matchupCache(), JSON.stringify(cache));
   }
-  const ids = new Set(games.map((g) => String(g.gameId)));
+  const ids = new Set(keep.map((g) => String(g.gameId)));
   const matchups = {};
   for (const [gameId, row] of Object.entries(cache)) {
     if (!row || !ids.has(gameId)) continue;
@@ -85,31 +114,29 @@ export async function buildProfile(client, { puuid, maxGames = MAX_GAMES } = {})
   const seen = new Set();
   const unique = [];
   for (const g of games) {
-    if (seen.has(g.gameId)) continue;
+    if (seen.has(g.gameId) || isRemake(g) || !g.participants?.[0]) continue;
     seen.add(g.gameId);
     unique.push(g);
-    const p = g.participants?.[0];
-    if (!p) continue;
-    const c = entry(p.championId);
-    const q = (c.byQueue[g.queueId] ??= { games: 0, wins: 0 });
+  }
+  // Your own games add up across sessions; another player's are read as the client shows them.
+  const row = (g) => ({ gameId: g.gameId, queueId: g.queueId, championId: g.participants[0].championId, win: g.participants[0].stats?.win ? 1 : 0 });
+  const me = puuid ? null : await tryGet(client, '/lol-summoner/v1/current-summoner');
+  const rows = me?.puuid ? await keptHistory(unique, me.puuid).catch(() => unique.map(row)) : unique.map(row);
+  for (const r of rows) {
+    const c = entry(r.championId);
+    const q = (c.byQueue[r.queueId] ??= { games: 0, wins: 0 });
     c.games++;
     q.games++;
-    if (p.stats?.win) {
-      c.wins++;
-      q.wins++;
-    }
+    c.wins += r.win;
+    q.wins += r.win;
   }
-  let matchups = {};
-  if (!puuid) {
-    const me = await tryGet(client, '/lol-summoner/v1/current-summoner');
-    if (me?.puuid) matchups = await laneMatchups(client, unique, me.puuid).catch(() => ({}));
-  }
+  const matchups = me?.puuid ? await laneMatchups(client, unique, me.puuid, rows).catch(() => ({})) : {};
   const solo = ranked?.queueMap?.RANKED_SOLO_5x5;
   return {
     champions,
     matchups,
     rank: solo?.tier && solo.tier !== 'NONE' ? { tier: solo.tier, division: solo.division } : null,
-    gamesRead: seen.size,
+    gamesRead: rows.length,
   };
 }
 

@@ -22,7 +22,7 @@ export function recommend(draft, { stats = {}, profile, champions = {}, pickable
   }
   if (draft.kind === 'aram') {
     const modeStats = MAYHEM_QUEUES.has(draft.queueId) ? stats.mayhem : null;
-    return recommendAram(draft, { stats: modeStats, profile, info, names, srStats: stats.draft, owned: owned ?? pickable });
+    return recommendAram(draft, { stats: modeStats, info, srStats: stats.draft, owned: owned ?? pickable });
   }
   return { options: [], note: 'Arena : les conseils arrivent dans une prochaine version.' };
 }

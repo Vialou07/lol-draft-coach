@@ -238,10 +238,6 @@ a.button.primary { background: var(--gold); border-color: var(--gold); color: #1
 .cols, .col, .tiles { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .card.mine .tag { color: var(--gold); font-weight: 700; }
 .card.mine:not(.ref) { box-shadow: inset 0 0 0 1.5px var(--gold-soft); }
-.chip.tier b { margin-left: 3px; }
-.chip.tier.up b { color: var(--pos); }
-.chip.tier.amber b { color: var(--gold); }
-.chip.tier.down b { color: var(--neg); }
 .note.good { color: var(--pos); }
 
 @media (min-width: 900px) {
