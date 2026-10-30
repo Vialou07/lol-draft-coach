@@ -12,7 +12,7 @@ import { championInfo } from '../companion/static-data.mjs';
 
 // Frozen stats so the tests never depend on the network.
 const read = (p) => JSON.parse(readFileSync(new URL(p, import.meta.url), 'utf8'));
-const stats = { draft: read('./fixtures/draft-stats-mini.json') };
+const stats = { draft: read('./fixtures/draft-stats-mini.json'), mayhem: read('./fixtures/mayhem-stats.json') };
 const info = championInfo(read('./fixtures/ddragon-champions.json'));
 const startCompanion = (opts) => start({ ...opts, loadStats: async () => stats, loadInfo: async () => info });
 

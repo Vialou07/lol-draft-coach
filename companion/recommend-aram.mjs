@@ -5,6 +5,7 @@
 import { createDraftModel, sigmoid, toPoints } from './model-draft.mjs';
 
 const N0_MODE = 1000; // pseudo-games pulling a mode winrate towards 50 % [assumption]
+const ASSUMED_GAMES = 3000; // the source publishes no sample size [assumption]
 const N0_PERSONAL = 25; // same prior as the Summoner's Rift form term
 const NO_FRONTLINE = -0.08; // logit, about −2 points for a team without any tank [assumption]
 const SWITCH_THRESHOLD = 0.01; // advise a bench swap only above one point of win chance
@@ -12,7 +13,7 @@ const LABELS = { mode: 'Mode', personal: 'Ton bilan', comp: 'Compo', front: 'Tan
 
 let srCache = { stats: null, model: null };
 
-export function recommendAram(draft, { stats, profile, info = {}, names = {}, srStats }) {
+export function recommendAram(draft, { stats, profile, info = {}, names = {}, srStats, pickable }) {
   const me = draft.allies.find((p) => p.me);
   if (!me?.championId) return { options: [], note: 'En attente de ton champion...' };
   const queue = String(draft.queueId);
@@ -22,13 +23,13 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
   const mode = (key) => {
     const rec = stats?.champs?.[key];
     if (!rec) return { value: 0, variance: 0, games: 0 };
-    const [g, w] = rec;
-    const p = (w + N0_MODE * 0.5) / (g + N0_MODE);
-    return { value: Math.log(p / (1 - p)), variance: 4 / (g + N0_MODE), games: g };
+    const g = rec.games ?? ASSUMED_GAMES;
+    const p = (rec.wr * g + N0_MODE * 0.5) / (g + N0_MODE);
+    return { value: Math.log(p / (1 - p)), variance: 4 / (g + N0_MODE), games: rec.games ?? 0 };
   };
   const personal = (key) => {
     const q = profile?.champions?.[key]?.byQueue?.[queue] ?? { games: 0, wins: 0 };
-    return { value: (q.wins - 0.5 * q.games) / (0.25 * q.games + N0_PERSONAL), variance: 1 / (0.25 * q.games + N0_PERSONAL), games: q.games, wins: q.wins };
+    return { value: (q.wins - 0.5 * q.games) / (0.25 * q.games + N0_PERSONAL), variance: q.games ? 1 / (0.25 * q.games + N0_PERSONAL) : 0, games: q.games, wins: q.wins };
   };
   // Physical damage share from the champion's main Summoner's Rift role, when available.
   const phys = (key) => {
@@ -58,10 +59,12 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
   };
 
   const mine = score(String(me.championId), 'Ton champion');
-  const bench = draft.bench.map((id) => score(String(id), 'Sur le banc'));
+  // The bench only lets you take champions you own.
+  const owned = pickable?.length ? new Set(pickable) : null;
+  const bench = draft.bench.filter((id) => !owned || owned.has(id)).map((id) => score(String(id), 'Sur le banc'));
   const ranked = [mine, ...bench].sort((a, b) => b.p - a.p);
   const swap = ranked[0] !== mine && ranked[0].p - mine.p >= SWITCH_THRESHOLD;
-  const ordered = swap ? ranked : [mine, ...ranked.filter((s) => s !== mine)];
+  const ordered = swap ? [...ranked.filter((s) => s !== mine).slice(0, 3), mine] : [mine, ...ranked.filter((s) => s !== mine)];
 
   const sourceNote = stats?.source
     ? `Stats ${stats.source}${stats.version ? `, patch ${stats.version}` : ''}.`

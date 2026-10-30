@@ -6,6 +6,7 @@ import { startServer } from './server.mjs';
 import { buildProfile } from './profile.mjs';
 import { recommend } from './recommend.mjs';
 import { loadDraftStats } from './stats-draft.mjs';
+import { loadMayhemStats } from './stats-aram.mjs';
 import { loadChampionInfo } from './static-data.mjs';
 
 const RETRY_MS = 3000;
@@ -20,7 +21,11 @@ async function latestDdragon() {
   }
 }
 
-const defaultStats = async ({ onLog }) => ({ draft: await loadDraftStats({ onLog }) });
+const defaultStats = async ({ onLog, info }) => {
+  const keyById = Object.fromEntries(Object.entries(info).map(([key, c]) => [c.id, key]));
+  const [draft, mayhem] = await Promise.all([loadDraftStats({ onLog }), loadMayhemStats(keyById, { onLog })]);
+  return { draft, mayhem };
+};
 
 export async function startCompanion({ port = 4317, host, lockfile, onLog = () => {}, loadStats = defaultStats, loadInfo = loadChampionInfo } = {}) {
   const state = {
@@ -177,13 +182,15 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   };
 
   // Stats can take a while to download: serve the page right away and advise once they land.
-  const ready = Promise.all([
-    loadInfo(state.assets.ddragon).then((i) => (info = i ?? {})),
-    loadStats({ onLog }).then((s) => {
+  const ready = loadInfo(state.assets.ddragon)
+    .then((i) => (info = i ?? {}))
+    .then(() => loadStats({ onLog, info }))
+    .then((s) => {
       stats = s ?? {};
-      onLog(`Stats : draft ${stats.draft ? `patch ${stats.draft.version}` : 'absentes'}, ARAM ${Object.keys(stats.aram ?? {}).join(', ') || 'absentes'}`);
-    }),
-  ]).then(() => {
+      const count = (x) => (x ? `${x.version ?? '?'}, ${Object.keys(x.champs ?? {}).length} champions` : 'absentes');
+      onLog(`Stats : draft ${count(stats.draft)} · ARAM du Chaos ${count(stats.mayhem)}`);
+    })
+    .then(() => {
     advise();
     changed();
   });

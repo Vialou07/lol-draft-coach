@@ -113,7 +113,7 @@ export function createDraftModel(stats, { difficulty = {} } = {}) {
     const A = 0.16 + (0.24 * (Math.min(10, Math.max(1, d)) - 1)) / 9;
     const curve = -A * Math.exp(-experience / 8) + 0.15 * A; // relative to the average player of this champion
     const form = (wins - 0.5 * games) / (0.25 * games + 25);
-    return { value: curve + form, variance: 1 / (0.25 * games + 25), experience, games, wins };
+    return { value: curve + form, variance: games ? 1 / (0.25 * games + 25) : 0, experience, games, wins };
   }
 
   function compTerm(physShares) {

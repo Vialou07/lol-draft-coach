@@ -7,7 +7,7 @@ import { createDraftModel } from '../companion/model-draft.mjs';
 import { championInfo } from '../companion/static-data.mjs';
 
 const read = (p) => JSON.parse(readFileSync(new URL(p, import.meta.url), 'utf8'));
-const stats = { draft: read('./fixtures/draft-stats-mini.json') };
+const stats = { draft: read('./fixtures/draft-stats-mini.json'), mayhem: read('./fixtures/mayhem-stats.json') };
 const ddragon = read('./fixtures/ddragon-champions.json');
 const info = championInfo(ddragon);
 const champions = Object.fromEntries(Object.values(ddragon.data).map((c) => [c.key, { name: c.name, alias: c.id }]));
@@ -127,4 +127,22 @@ test('ARAM: a personal record on a champion moves it, shrunk towards neutral', (
   const o = advice.options.find((x) => x.championId === benchId);
   const pts = o.reasons.find((r) => r.label === 'Ton bilan').delta * 100;
   assert.ok(pts > 2 && pts < 6, `16/20 should be worth a few points, not 30: ${pts}`);
+});
+
+test('ARAM Mayhem: with mode winrates, a much stronger bench champion is advised, an unowned one is not', () => {
+  const byWr = Object.entries(stats.mayhem.champs).sort((a, b) => a[1].wr - b[1].wr);
+  const [weak] = byWr[0];
+  const [strong] = byWr.at(-1);
+  const [second] = byWr.at(-2);
+  const draft = {
+    kind: 'aram', queueId: 2400, phase: 'BAN_PICK', bans: { ally: [], enemy: [] }, enemies: [],
+    allies: [{ cellId: 0, me: true, role: '', championId: Number(weak), hoverId: 0 }],
+    bench: [Number(strong), Number(second)], allyBanHovers: [],
+  };
+  const advice = recommend(draft, { stats, profile: {}, champions, info });
+  assert.equal(advice.verb, 'Prends sur le banc');
+  assert.equal(advice.options[0].championId, Number(strong));
+  assert.ok(advice.options.some((o) => o.championId === Number(weak)), 'my champion stays listed for comparison');
+  const notOwned = recommend(draft, { stats, profile: {}, champions, info, pickable: [Number(weak), Number(second)] });
+  assert.equal(notOwned.options[0].championId, Number(second), 'unowned bench champion skipped');
 });
