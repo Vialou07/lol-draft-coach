@@ -46,19 +46,24 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(
 const champ = (id) => state?.champions?.[id];
 const champName = (id) => champ(id)?.name ?? `#${id}`;
 const ddragonIcon = (alias) => `https://ddragon.leagueoflegends.com/cdn/${state?.assets?.ddragon ?? DDRAGON}/img/champion/${alias}.png`;
+// Icons by champion id (Data Dragon names differ from the client's for a few, e.g. Fiddlesticks).
+const cdragonIcon = (id) => `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/${id}.png`;
 const img = (id, cls = '') => {
   if (!(id > 0)) return '';
   const alias = champ(id)?.alias ?? '';
-  const src = remote && alias ? ddragonIcon(alias) : `/icon/${id}`;
-  return `<img class="${cls}" src="${src}" alt="${esc(champName(id))}" data-alias="${esc(alias)}">`;
+  const src = remote ? cdragonIcon(id) : `/icon/${id}`;
+  return `<img class="${cls}" src="${src}" alt="${esc(champName(id))}" data-id="${id}" data-alias="${esc(alias)}">`;
 };
 
-// The companion proxies icons from the client; outside a game, fall back to Data Dragon.
+// The companion proxies icons from the client; else Community Dragon, then Data Dragon.
 document.addEventListener('error', (e) => {
   const el = e.target;
-  if (el.tagName !== 'IMG' || !el.dataset.alias || el.dataset.fallback) return;
-  el.dataset.fallback = '1';
-  el.src = ddragonIcon(el.dataset.alias);
+  if (el.tagName !== 'IMG' || !el.dataset.id) return;
+  const tried = Number(el.dataset.fallback ?? 0);
+  const next = [cdragonIcon(el.dataset.id), el.dataset.alias ? ddragonIcon(el.dataset.alias) : null].filter((u) => u && u !== el.src)[tried];
+  if (!next) return;
+  el.dataset.fallback = String(tried + 1);
+  el.src = next;
 }, true);
 
 const pts = (x, digits = 1) => {
@@ -235,7 +240,7 @@ function card(o, { flat = false, ref = false, best = false, precise = false } = 
     ? `<span class="big ${trend(o.gain, 0.05)}">${num(o.gain, 'pts', 0)}<small>pt</small></span>`
     : `<span class="big">${num(o.p, precise ? 'pct1' : 'pct', 0.5)}<small>%</small></span>`;
   const gauge = showNumber && !isBan
-    ? `<div class="gauge ${best ? 'best' : ''}"><i class="range" style="left:${pos(o.low ?? o.p)}%;right:${100 - pos(o.high ?? o.p)}%"></i><i class="fill" style="width:${pos(o.p)}%"></i><i class="mid" style="left:${pos(0.5)}%"></i></div>`
+    ? `<div class="gauge"><i class="range" style="left:${pos(o.low ?? o.p)}%;right:${100 - pos(o.high ?? o.p)}%"></i><i class="fill ${o.p >= 0.5 ? 'up' : 'down'}" style="width:${pos(o.p)}%"></i><i class="mid" style="left:${pos(0.5)}%"></i></div>`
     : '';
   const chips = (o.reasons ?? []).map((r) => `<span class="chip ${trend(r.delta)}">${esc(r.label)}<b>${pts(r.delta)}</b></span>`).join('');
   // A long tag (bans) moves to the second line so the name never gets cut.
@@ -247,7 +252,7 @@ function card(o, { flat = false, ref = false, best = false, precise = false } = 
         ${o.high - o.low > 0.001 ? `<div>Entre ${pct(o.low)} et ${pct(o.high)}${o.n ? ` · ${o.n.toLocaleString('fr-FR')} parties analysées` : ''}</div>` : ''}
       </div>`
     : '';
-  return `<article id="card-${o.championId}${ref ? '-ref' : ''}" class="card ${ref ? 'ref' : ''} ${o.mine ? 'mine' : ''} ${opened.has(o.championId) ? 'open' : ''}" data-id="${o.championId}">
+  return `<article id="card-${o.championId}${ref ? '-ref' : ''}" class="card ${ref ? 'ref' : ''} ${best ? 'best' : ''} ${o.mine ? 'mine' : ''} ${opened.has(o.championId) ? 'open' : ''}" data-id="${o.championId}">
     ${o.close ? '<span class="eq">≈ égalité</span>' : ''}
     ${img(o.championId, 'portrait')}
     <div class="title"><span class="name">${esc(champName(o.championId))}</span>${tagInTitle ? `<span class="tag">${esc(o.tag ?? '')}</span>` : ''}</div>
@@ -579,6 +584,22 @@ function renderLearn(a) {
   return `<div class="label"><span>Tes champions à apprendre</span></div><section class="analysis">${rows}</section>`;
 }
 
+// ARAM: every champion you could play, ranked, on one compact line each.
+function aramRanking(a) {
+  const pos = (x) => Math.max(0, Math.min(100, ((x - SCALE[0]) / (SCALE[1] - SCALE[0])) * 100));
+  return `<section class="ranking">${a.options.map((o, i) => {
+    const advice = o.championId === a.focus && !a.flat;
+    const tag = o.mine ? 'ton champion' : o.takenBy ? `plutôt pour ${o.takenBy}` : 'banc';
+    return `<article id="rank-${o.championId}" class="rank ${advice ? 'advice' : ''} ${o.mine ? 'mine' : ''} ${o.takenBy ? 'taken' : ''}">
+        <span class="rk">${i + 1}</span>${img(o.championId)}
+        <div class="rname"><b>${esc(champName(o.championId))}</b><small>${esc(tag)}</small></div>
+        ${advice ? `<span class="pick">${a.verb === 'Prends' ? 'Prends-le' : 'Garde-le'}</span>` : ''}
+        <b class="rp">${a.flat ? '–' : num(o.p, 'pct1', 0.5)}<small>%</small></b>
+        ${a.flat ? '' : `<div class="rbar"><i class="${o.p >= 0.5 ? 'up' : 'down'}" style="width:${pos(o.p)}%"></i><i class="mid" style="left:${pos(0.5)}%"></i></div>`}
+      </article>`;
+  }).join('')}</section>`;
+}
+
 // Two parts: the choice itself, and the reading of the draft (side by side on a PC).
 function renderAdvice(d, a) {
   if (!a) return { main: '', side: '' };
@@ -589,17 +610,17 @@ function renderAdvice(d, a) {
   let title = 'Tes meilleurs choix';
   let right = 'chance de gagner';
   if (d.myTurn === 'ban') [title, right] = ['Bans conseillés', 'gain estimé'];
-  if (aram) [title, right] = ['Ton champion et le banc', 'winrate du mode'];
+  if (aram) [title, right] = ['Classement du banc', 'winrate du mode'];
   if (a.verb === 'Verrouillé') title = 'Ton champion';
   if (a.allClose) right = '≈ les 3 se valent';
   if (flat) right = '';
   const topP = Math.max(...a.options.map((o) => o.p ?? -1));
   const best = (o) => (aram ? o.championId === a.focus : o.p != null && o.p === topP) && a.options.length > 1;
-  const cards = a.options.map((o) => card(o, { flat, best: best(o), precise: aram })).join('');
+  const cards = aram ? aramRanking(a) : a.options.map((o) => card(o, { flat, best: best(o) })).join('');
   const legend = aram && flat
     ? ''
     : aram
-    ? '<p class="legend">Winrate de chaque champion dans le mode, tel que la source le publie. On ne te conseille de changer que pour au moins un point de plus.</p>'
+    ? '<p class="legend">Ton champion et tout le banc, classés par winrate dans le mode (tel que la source le publie). Barre verte : plus de 50 % de victoires, rouge : moins. Le cadre doré est le conseil : on ne te dit de changer que pour au moins un point de plus.</p>'
     : !flat && d.myTurn !== 'ban' && a.options.some((o) => o.p != null)
       ? '<p class="legend">Ligne blanche = 50 %. Un point de plus = une victoire de plus sur 100 parties. Entre deux bons choix, l’écart est souvent de 1 à 4 points.</p>'
       : '';

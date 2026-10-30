@@ -71,9 +71,8 @@ export function recommendAram(draft, { stats, info = {}, srStats, owned }) {
   const swap = Boolean(stats) && bench.length > 0 && shownGap(bench[0].p - mine.p) >= SWITCH_THRESHOLD;
   const focus = swap ? bench[0] : mine;
   const all = [mine, ...bench];
-  // One list: the advice first, then the others by strength, your champion always in it.
-  const shown = [focus, ...all.filter((x) => x !== focus).sort((a, b) => b.p - a.p)].slice(0, 4);
-  if (!shown.includes(mine)) shown[shown.length - 1] = mine;
+  // One ranking: your champion and the whole bench, by winrate in the mode.
+  const shown = [...all].sort((a, b) => b.p - a.p);
   const spread = Math.max(...all.map((x) => x.p)) - Math.min(...all.map((x) => x.p));
   // Our team's make-up with a given champion in my seat (the team split may change who I take).
   const analysisWith = (key) => {

@@ -110,7 +110,9 @@ test('ARAM Mayhem: every real game gets a keep-or-swap advice over my champion a
     assert.equal(advice.current.championId, me.championId, 'my champion is the reference');
     assert.ok(advice.options.some((o) => o.mine && o.championId === me.championId), 'my champion is in the list');
     for (const o of advice.options) if (!o.mine) assert.ok(draft.bench.includes(o.championId), 'the others come from the bench');
-    assert.equal(advice.options[0].championId, advice.focus, 'the advice comes first');
+    assert.ok(advice.options.some((o) => o.championId === advice.focus), 'the advice is in the list');
+    assert.equal(advice.options.length, 1 + new Set(draft.bench).size, 'your champion and the whole bench');
+    assert.ok(advice.options.every((o, i) => i === 0 || advice.options[i - 1].p >= o.p), 'ranked by winrate');
     if (advice.verb === 'Prends') {
       swaps++;
       assert.ok(advice.options[0].delta >= 0.01, 'a swap is worth at least a point');
@@ -143,7 +145,7 @@ test('ARAM: tonight’s Galio select, a bench champion less than a point better 
   const advice = recommend(draft, { stats, profile: {}, champions, info });
   assert.equal(advice.verb, 'Garde');
   assert.equal(advice.focus, 3);
-  assert.equal(advice.options[0].championId, 3, 'the advice comes first');
+  assert.equal(advice.options[0].championId, 78, 'Poppy ranks first, by 0.8 point: not worth the swap');
   const early = recommend(draftState(g.events[10].session), { stats, profile: {}, champions, info });
   assert.equal(early.verb, 'Prends', 'Ekko back on the bench is worth the swap');
   assert.equal(early.focus, 245);

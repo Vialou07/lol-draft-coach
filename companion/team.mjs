@@ -34,7 +34,7 @@ export function assignBench(views) {
         const owner = taken.get(o.championId);
         return owner != null && owner !== i ? { ...o, takenBy: views[owner].name, tag: `Plutôt pour ${views[owner].name}`, close: false } : { ...o, close: false };
       })
-      .sort((a, b) => Number(b.championId === focus) - Number(a.championId === focus) || Number(Boolean(a.takenBy)) - Number(Boolean(b.takenBy)) || b.p - a.p);
+      .sort((a, b) => b.p - a.p);
     return {
       ...view,
       advice: { ...rest, options, verb: mine ? 'Prends' : 'Garde', focus, assigned: mine ?? null, analysis: analysisFor?.[focus] ?? rest.analysis, analysisFor },
