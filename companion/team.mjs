@@ -28,9 +28,11 @@ export function assignBench(views) {
         return owner != null && owner !== i ? { ...o, takenBy: views[owner].name, tag: `Plutôt pour ${views[owner].name}` } : o;
       })
       .sort((a, b) => Number(b.championId === mine) - Number(a.championId === mine) || Number(Boolean(a.takenBy)) - Number(Boolean(b.takenBy)) || b.p - a.p);
+    const focus = mine ?? view.advice.current?.championId;
+    const { analysisFor, ...rest } = view.advice;
     return {
       ...view,
-      advice: { ...view.advice, options, verb: mine ? 'Prends sur le banc' : 'Garde ton champion', assigned: mine ?? null },
+      advice: { ...rest, options, verb: mine ? 'Prends sur le banc' : 'Garde ton champion', assigned: mine ?? null, analysis: analysisFor?.[focus] ?? rest.analysis },
     };
   });
 }
