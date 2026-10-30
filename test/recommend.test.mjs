@@ -41,7 +41,9 @@ test('advice is produced at every moment of every real ranked draft, without err
       }
       if (draft.myTurn === 'pick') {
         picks++;
-        assert.ok(advice.options.length >= 2, 'several pick options');
+        assert.ok(advice.options.length >= 3, 'Riot rules: always several options');
+        assert.ok(advice.reference, 'gap measured against a reference champion');
+        for (const o of advice.options) assert.ok(o.reasons.length <= 2, 'two reasons at most');
         const taken = new Set([...draft.allies, ...draft.enemies].map((p) => p.championId).filter(Boolean));
         for (const o of advice.options) assert.ok(!taken.has(o.championId), 'already picked champion suggested');
         const ps = advice.options.map((o) => o.p);
@@ -57,7 +59,7 @@ test('ban turn gives three bans that are still available', () => {
     const e = g.events.find(({ session }) => draftState(session).myTurn === 'ban');
     if (!e) continue;
     const { draft, advice } = advise(e.session);
-    assert.equal(advice.verb, 'Ban conseillé');
+    assert.equal(advice.verb, 'Ton ban');
     assert.equal(advice.options.length, 3);
     for (const o of advice.options) assert.ok(!draft.allyBanHovers.includes(o.championId));
   }
@@ -105,14 +107,13 @@ test('ARAM Mayhem: every real game gets a keep-or-swap advice over my champion a
     const draft = draftState(g.events.at(-1).session);
     const advice = recommend(draft, { stats, profile, champions, info });
     const me = draft.allies.find((p) => p.me);
-    const allowed = new Set([me.championId, ...draft.bench]);
-    assert.ok(advice.options.length >= 1);
-    for (const o of advice.options) assert.ok(allowed.has(o.championId), 'only my champion or the bench');
+    assert.equal(advice.current.championId, me.championId, 'my champion is the reference');
+    for (const o of advice.options) assert.ok(draft.bench.includes(o.championId), 'options come from the bench');
     if (advice.verb === 'Prends sur le banc') {
       swaps++;
-      assert.notEqual(advice.options[0].championId, me.championId);
+      assert.ok(advice.options[0].delta >= 0.01, 'a swap is worth at least a point');
     } else {
-      assert.equal(advice.options[0].championId, me.championId);
+      assert.ok(advice.options.every((o) => o.delta < 0.01), 'nothing on the bench beats my champion');
     }
   }
   assert.ok(swaps > 0, 'some games suggest a swap');
@@ -124,7 +125,7 @@ test('ARAM: a personal record on a champion moves it, shrunk towards neutral', (
   const benchId = draft.bench[0];
   const strong = { champions: { [benchId]: { byQueue: { 2400: { games: 20, wins: 16 } } } } };
   const advice = recommend(draft, { stats, profile: strong, champions, info });
-  const o = advice.options.find((x) => x.championId === benchId);
+  const o = advice.options.find((x) => x.championId === benchId) ?? advice.current;
   const pts = o.reasons.find((r) => r.label === 'Ton bilan').delta * 100;
   assert.ok(pts > 2 && pts < 6, `16/20 should be worth a few points, not 30: ${pts}`);
 });
@@ -142,7 +143,15 @@ test('ARAM Mayhem: with mode winrates, a much stronger bench champion is advised
   const advice = recommend(draft, { stats, profile: {}, champions, info });
   assert.equal(advice.verb, 'Prends sur le banc');
   assert.equal(advice.options[0].championId, Number(strong));
-  assert.ok(advice.options.some((o) => o.championId === Number(weak)), 'my champion stays listed for comparison');
-  const notOwned = recommend(draft, { stats, profile: {}, champions, info, pickable: [Number(weak), Number(second)] });
+  assert.equal(advice.current.championId, Number(weak), 'my champion stays shown for comparison');
+  const notOwned = recommend(draft, { stats, profile: {}, champions, info, owned: [Number(weak), Number(second)] });
   assert.equal(notOwned.options[0].championId, Number(second), 'unowned bench champion skipped');
+});
+
+test('ARAM: an ownership list that would hide the whole bench is ignored', () => {
+  const g = read('./fixtures/real/q2400-2026-10-25-50.json');
+  const draft = draftState(g.events.at(-1).session);
+  const me = draft.allies.find((p) => p.me);
+  const advice = recommend(draft, { stats, profile: {}, champions, info, owned: [me.championId] });
+  assert.ok(advice.options.length > 0, 'bench still shown');
 });

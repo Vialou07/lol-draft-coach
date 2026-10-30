@@ -52,6 +52,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   let stats = {};
   let info = {};
   let pickable = null;
+  let owned = null;
   let ws = null;
   let retry = null;
   let stopped = false;
@@ -66,7 +67,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   const advise = () => {
     if (!state.draft) return;
     try {
-      state.advice = recommend(state.draft, { stats, profile, champions: state.champions, pickable, info });
+      state.advice = recommend(state.draft, { stats, profile, champions: state.champions, pickable, owned, info });
     } catch (e) {
       onLog(`Erreur de calcul : ${e.message}`);
       state.advice = { options: [], note: 'Conseil indisponible pour ce moment de la draft.' };
@@ -88,6 +89,14 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
         onLog(`Champions jouables : ${Array.isArray(ids) ? ids.length : 'indisponible'}`);
         if (!Array.isArray(ids) || state.status !== 'champ-select') return;
         pickable = ids;
+        advise();
+        changed();
+      });
+      tryGet(client, '/lol-champions/v1/owned-champions-minimal').then((list) => {
+        const ids = Array.isArray(list) ? list.filter((c) => c.ownership?.owned || c.ownership?.freeToPlay || c.freeToPlay).map((c) => c.id) : null;
+        onLog(`Champions possédés : ${ids ? ids.length : 'indisponible'}`);
+        if (!ids?.length || state.status !== 'champ-select') return;
+        owned = ids;
         advise();
         changed();
       });

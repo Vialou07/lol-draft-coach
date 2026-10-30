@@ -60,7 +60,7 @@ test('ranked solo: the page receives the live draft, then the end of champ selec
     assert.ok(Object.keys(r.states.at(-1).champions).length > 150);
     const withAdvice = drafts.filter((s) => s.advice?.options?.length);
     assert.ok(withAdvice.length > 0, 'advice reached the page');
-    assert.ok(withAdvice.some((s) => s.advice.verb === 'Pick conseillé'), 'pick advice during my turn');
+    assert.ok(withAdvice.some((s) => s.advice.verb === 'À toi'), 'pick advice during my turn');
   } finally {
     await cleanup(r);
   }

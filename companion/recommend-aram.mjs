@@ -6,14 +6,14 @@ import { createDraftModel, sigmoid, toPoints } from './model-draft.mjs';
 
 const N0_MODE = 1000; // pseudo-games pulling a mode winrate towards 50 % [assumption]
 const ASSUMED_GAMES = 3000; // the source publishes no sample size [assumption]
-const N0_PERSONAL = 25; // same prior as the Summoner's Rift form term
+const N0_PERSONAL = 40; // a personal record over a few games is mostly noise
 const NO_FRONTLINE = -0.08; // logit, about −2 points for a team without any tank [assumption]
 const SWITCH_THRESHOLD = 0.01; // advise a bench swap only above one point of win chance
 const LABELS = { mode: 'Mode', personal: 'Ton bilan', comp: 'Compo', front: 'Tank' };
 
 let srCache = { stats: null, model: null };
 
-export function recommendAram(draft, { stats, profile, info = {}, names = {}, srStats, pickable }) {
+export function recommendAram(draft, { stats, profile, info = {}, names = {}, srStats, owned }) {
   const me = draft.allies.find((p) => p.me);
   if (!me?.championId) return { options: [], note: 'En attente de ton champion...' };
   const queue = String(draft.queueId);
@@ -59,35 +59,42 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
   };
 
   const mine = score(String(me.championId), 'Ton champion');
-  // The bench only lets you take champions you own.
-  const owned = pickable?.length ? new Set(pickable) : null;
-  const bench = draft.bench.filter((id) => !owned || owned.has(id)).map((id) => score(String(id), 'Sur le banc'));
-  const ranked = [mine, ...bench].sort((a, b) => b.p - a.p);
-  const swap = ranked[0] !== mine && ranked[0].p - mine.p >= SWITCH_THRESHOLD;
-  const ordered = swap ? [...ranked.filter((s) => s !== mine).slice(0, 3), mine] : [mine, ...ranked.filter((s) => s !== mine)];
+  // The bench only lets you take champions you own. If the list would hide the whole bench,
+  // it is probably not what we think it is: show the bench unfiltered.
+  const ownedSet = owned?.length ? new Set(owned) : null;
+  const usable = ownedSet ? draft.bench.filter((id) => ownedSet.has(id)) : draft.bench;
+  const bench = (usable.length ? usable : draft.bench)
+    .map((id) => score(String(id), 'Sur le banc'))
+    .sort((a, b) => b.p - a.p);
+  const swap = bench.length > 0 && bench[0].p - mine.p >= SWITCH_THRESHOLD;
+  const all = [mine, ...bench];
+  const spread = Math.max(...all.map((x) => x.p)) - Math.min(...all.map((x) => x.p));
 
   const sourceNote = stats?.source
     ? `Stats ${stats.source}${stats.version ? `, patch ${stats.version}` : ''}.`
     : 'Pas de winrates publics pour ce mode : conseil basé sur ta compo et ton bilan perso.';
-  const spread = ranked[0].p - ranked.at(-1).p;
   return {
     verb: swap ? 'Prends sur le banc' : 'Garde ton champion',
-    options: ordered.slice(0, 4).map(option),
+    reference: { championId: Number(mine.key), label: 'ton champion' },
+    options: bench.slice(0, 3).map((x) => option(x, mine)),
+    current: option(mine, mine),
     flat: spread < 0.005,
     note: spread < 0.005 ? `Rien ne départage ces champions pour l'instant. ${sourceNote}` : sourceNote,
   };
 }
 
-function option(s) {
+function option(s, reference) {
   const half = 1.2816 * Math.sqrt(s.variance) * s.p * (1 - s.p);
+  const vs = reference !== s ? reference : null;
   const reasons = Object.entries(s.terms)
-    .map(([k, v]) => ({ label: LABELS[k], delta: toPoints(v, s.p) / 100 }))
-    .filter((r) => Math.abs(r.delta) >= 0.005)
+    .map(([k, v]) => ({ label: LABELS[k], delta: toPoints(v - (vs ? vs.terms[k] : 0), s.p) / 100 }))
+    .filter((r) => Math.abs(r.delta) >= 0.01)
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
-    .slice(0, 3);
+    .slice(0, 2);
   const record = s.personalGames ? ` · ${s.personalWins}/${s.personalGames} pour toi` : '';
   return {
     championId: Number(s.key),
+    delta: s.p - reference.p,
     p: s.p,
     low: Math.max(0, s.p - half),
     high: Math.min(1, s.p + half),

@@ -1,128 +1,148 @@
-// Live page: receives the companion's state over a websocket and renders it.
+// Live page: receives the companion's state over a websocket and renders one screen per moment.
 
 const app = document.getElementById('app');
 const linkLost = document.getElementById('link');
 
 const QUEUES = {
-  400: 'Normale draft', 420: 'Classée Solo/Duo', 430: 'Normale aveugle', 440: 'Classée Flexible',
-  450: 'ARAM', 480: 'Swiftplay', 490: 'Partie rapide', 700: 'Clash', 1700: 'Arena', 1710: 'Arena', 2400: 'ARAM du Chaos',
+  400: 'Normale draft', 420: 'Classée solo/duo', 430: 'Normale aveugle', 440: 'Classée flexible', 450: 'ARAM',
+  480: 'Swiftplay', 490: 'Partie rapide', 700: 'Clash', 1700: 'Arena', 1710: 'Arena', 1750: 'Arena', 2400: 'ARAM du Chaos',
 };
-const ROLES = { top: 'TOP', jungle: 'JGL', mid: 'MID', bot: 'BOT', support: 'SUP' };
+const COLS = ['top', 'jungle', 'mid', 'bot', 'support'];
+const COL_LABELS = { top: 'TOP', jungle: 'JGL', mid: 'MID', bot: 'ADC', support: 'SUP' };
+const ROLE_NAMES = { top: 'Top', jungle: 'Jungle', mid: 'Mid', bot: 'ADC', support: 'Support' };
 const DDRAGON = '16.21.1';
+const SCALE_PTS = 8; // margin bars share one scale: ±8 points
+const LEGAL = 'LoL Draft Coach isn’t endorsed by Riot Games and doesn’t reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.';
 
 let state = null;
 let lastKey = '';
 let deadline = null;
 let phaseTotal = null;
+const opened = new Set();
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const champ = (id) => state?.champions?.[id];
 const champName = (id) => champ(id)?.name ?? `#${id}`;
-const icon = (id, cls = '') =>
-  id > 0
-    ? `<img class="${cls}" src="/icon/${id}" alt="${esc(champName(id))}" loading="lazy" data-alias="${esc(champ(id)?.alias ?? '')}">`
-    : '';
+const img = (id, cls = '') =>
+  id > 0 ? `<img class="${cls}" src="/icon/${id}" alt="${esc(champName(id))}" data-alias="${esc(champ(id)?.alias ?? '')}">` : '';
 
-// Companion proxies icons from the client; outside a game, fall back to Data Dragon.
+// The companion proxies icons from the client; outside a game, fall back to Data Dragon.
 document.addEventListener('error', (e) => {
-  const img = e.target;
-  if (img.tagName !== 'IMG' || !img.dataset.alias || img.dataset.fallback) return;
-  img.dataset.fallback = '1';
-  img.src = `https://ddragon.leagueoflegends.com/cdn/${state?.assets?.ddragon ?? DDRAGON}/img/champion/${img.dataset.alias}.png`;
+  const el = e.target;
+  if (el.tagName !== 'IMG' || !el.dataset.alias || el.dataset.fallback) return;
+  el.dataset.fallback = '1';
+  el.src = `https://ddragon.leagueoflegends.com/cdn/${state?.assets?.ddragon ?? DDRAGON}/img/champion/${el.dataset.alias}.png`;
 }, true);
 
-const pct = (x, digits = 1) => `${(x * 100).toFixed(digits).replace('.', ',')} %`;
-const signed = (x, digits = 1) => {
-  const v = (x * 100).toFixed(digits).replace('.', ',');
-  return x > 0.0005 ? `+${v}` : x < -0.0005 ? `−${v.replace('-', '')}` : `${(0).toFixed(digits).replace('.', ',')}`;
+const pts = (x, digits = 1) => {
+  const v = Math.abs(x * 100).toFixed(digits).replace('.', ',');
+  return x * 100 >= 0.05 ? `+${v}` : x * 100 <= -0.05 ? `−${v}` : (0).toFixed(digits).replace('.', ',');
 };
-const trend = (x) => (x > 0.0005 ? 'up' : x < -0.0005 ? 'down' : 'flat');
-const games = (n) => `${Math.round(n).toLocaleString('fr-FR')} parties`;
+const trend = (x, min = 0.05) => (x * 100 >= min ? 'up' : x * 100 <= -min ? 'down' : 'flat');
+const pct = (x) => `${Math.round(x * 100)} %`;
 
-function phaseLabel(d) {
-  if (d.phase === 'PLANNING') return { text: 'Préparation', mine: false };
-  if (d.phase === 'FINALIZATION') return { text: 'Finalisation', mine: false };
-  if (d.phase === 'GAME_STARTING') return { text: 'Lancement', mine: false };
-  if (d.kind === 'aram') return { text: 'Choix des champions', mine: false };
+function headline(d, a, me) {
+  if (d.kind === 'aram') return { text: a?.verb ?? 'ARAM', mine: false };
+  if (d.kind === 'arena') return { text: 'Arena', mine: false };
+  if (d.myTurn === 'pick') return { text: 'À toi', mine: true };
   if (d.myTurn === 'ban') return { text: 'Ton ban', mine: true };
-  if (d.myTurn === 'pick') return { text: 'Ton pick', mine: true };
-  if (d.acting === 'enemy') return { text: 'Les adversaires choisissent', mine: false };
-  if (d.acting) return { text: 'Tes alliés choisissent', mine: false };
-  return { text: 'Bans et picks', mine: false };
+  if (d.phase === 'FINALIZATION' || d.phase === 'GAME_STARTING') return { text: 'Finalisation', mine: false };
+  if (me?.championId) return { text: 'Verrouillé', mine: false };
+  if (d.phase === 'PLANNING') return { text: 'Déclare ton pick', mine: false };
+  return { text: d.acting === 'enemy' ? 'Les adversaires choisissent' : 'Prépare ton pick', mine: false };
 }
 
 function renderWaiting() {
   const who = state?.summoner ? `<div class="who">Compte <b>${esc(state.summoner.gameName)}</b></div>` : '';
+  let body;
   if (!state || state.status === 'no-client') {
-    return `<section class="wait"><div class="pulse"></div><div class="big">Lance League of Legends</div>
-      <p>La page se met à jour toute seule dès que le client est ouvert.</p></section>`;
+    body = `<div class="pulse"></div><h1>Lance League of Legends</h1><p>La page se met à jour toute seule dès que le client est ouvert.</p>`;
+  } else if (state.gameflow === 'InProgress' || state.gameflow === 'GameStart') {
+    body = `<div class="pulse ok"></div><h1>Partie en cours</h1><p>Bonne game.</p>`;
+  } else {
+    const text = { Matchmaking: 'Recherche de partie', ReadyCheck: 'Partie trouvée', Lobby: 'Dans le salon' }[state.gameflow] ?? 'Connecté';
+    body = `<div class="pulse ok"></div><h1>${text}</h1><p>Les conseils apparaissent dès la sélection des champions.</p>`;
   }
-  if (state.gameflow === 'InProgress' || state.gameflow === 'GameStart') {
-    return `<section class="wait"><div class="pulse ok"></div><div class="big">Partie en cours</div><p>Bonne game.</p></section>${who}`;
-  }
-  const text = { Matchmaking: 'Recherche de partie...', ReadyCheck: 'Partie trouvée', Lobby: 'Dans le salon' }[state.gameflow];
-  return `<section class="wait"><div class="pulse ok"></div><div class="big">${text ?? 'Connecté'}</div>
-    <p>Les conseils apparaissent dès la sélection des champions.</p></section>${who}`;
+  return `<section class="wait">${body}</section>${who}<p class="legal">${LEGAL}</p>`;
 }
 
-// Win chance for picks, expected gain in points for bans.
-let flat = false;
-const value = (o) => (flat ? '' : o.p != null ? `${Math.round(o.p * 100)}<small>%</small>` : `${signed(o.gain)}<small> pt</small>`);
-const valueClass = (o) => (o.p != null ? (o.p >= 0.505 ? 'up' : o.p <= 0.495 ? 'down' : 'flat') : trend(o.gain));
-
-function renderAdvice(advice) {
-  if (!advice?.options?.length) {
-    return advice?.note ? `<p class="note">${esc(advice.note)}</p>` : '';
-  }
-  const [best, ...rest] = advice.options;
-  flat = Boolean(advice.flat);
-  const reasons = (best.reasons ?? [])
-    .map((r) => `<span class="chip ${trend(r.delta)}">${esc(r.label)}<b>${signed(r.delta)}</b></span>`)
-    .join('');
-  const range = !flat && best.p != null && best.low != null ? `${Math.round(best.low * 100)}–${Math.round(best.high * 100)} %` : '';
-  const sample = [range, best.n ? games(best.n) : '', best.p == null ? best.tag : ''].filter(Boolean).join(' · ');
-  const hero = `<section class="card hero" data-key="${best.championId}">
-    ${icon(best.championId, 'portrait')}
-    <div>
-      <div class="verb">${esc(advice.verb ?? 'Conseil')}</div>
-      <div class="name">${esc(champName(best.championId))}</div>
-      <div class="score"><span class="delta ${valueClass(best)}">${value(best)}</span></div>
-      ${sample ? `<div class="sample">${esc(sample)}</div>` : ''}
-    </div>
-    ${reasons ? `<div class="reasons">${reasons}</div>` : ''}
-    ${best.warn ? `<div class="warn">${esc(best.warn)}</div>` : ''}
-  </section>`;
-  const alts = rest.slice(0, 3).map((o) => `<div class="alt">
-      ${icon(o.championId)}
-      <div><div class="n">${esc(champName(o.championId))}</div><div class="t">${esc([o.tag, o.warn].filter(Boolean).join(' · '))}</div></div>
-      <span class="delta ${valueClass(o)}">${o.close ? '<i class="eq">≈</i>' : ''}${value(o)}</span>
-    </div>`).join('');
-  const note = advice.note ? `<p class="note">${esc(advice.note)}</p>` : '';
-  return hero + (alts ? `<section class="card alts">${alts}</section>` : '') + note;
+function pic(id, { hover = false, me = false, empty = false } = {}) {
+  const cls = ['pic', hover ? 'hover' : '', me ? 'me' : '', empty && !id ? 'empty' : ''].join(' ');
+  return `<div class="${cls}">${id ? img(id) : empty ? '?' : ''}</div>`;
 }
 
-function renderBoard(d) {
-  const slot = (p, ally) => {
-    const id = p.championId || (ally ? p.hoverId : 0);
-    const cls = ['slot', ally && p.me ? 'me' : '', !p.championId && id ? 'hover' : ''].join(' ');
-    const label = ally ? (p.me ? 'TOI' : ROLES[p.role] ?? '') : '';
-    return `<div class="${cls}"><div class="pic">${icon(id)}</div><span class="role">${label}&nbsp;</span></div>`;
-  };
-  const enemies = d.enemies.length && d.kind !== 'aram'
-    ? `<div><div class="row-label">Adversaires</div><div class="team">${d.enemies.map((p) => slot(p, false)).join('')}</div></div>`
+function renderGrid(d, a) {
+  const me = d.allies.find((p) => p.me);
+  if (d.kind === 'aram' || d.kind === 'arena' || !d.allies.some((p) => p.role)) {
+    const allies = d.allies.map((p) => `<div class="cell">${pic(p.championId || p.hoverId, { hover: !p.championId, me: p.me })}</div>`).join('');
+    const bench = d.kind === 'aram'
+      ? `<div class="rl">BANC</div><div class="bench">${d.bench.map((id) => pic(id)).join('') || '<span class="note">vide</span>'}</div>`
+      : '';
+    return `<section class="grid"><div class="rl">NOUS</div>${allies}${bench}</section>`;
+  }
+  const mineCol = COLS.indexOf(me?.role);
+  const head = `<div></div>${COLS.map((c, i) => `<div class="h ${i === mineCol ? 'mine' : ''}">${COL_LABELS[c]}</div>`).join('')}`;
+  const ours = COLS.map((c, i) => {
+    const p = d.allies.find((x) => x.role === c);
+    const id = p ? p.championId || p.hoverId : 0;
+    return `<div class="cell ${i === mineCol ? 'mine top' : ''}">${pic(id, { hover: p && !p.championId, me: p?.me, empty: true })}</div>`;
+  }).join('');
+  // Enemy roles are hidden: place each locked enemy in its most likely role.
+  const placed = Array(5).fill(0);
+  const locked = d.enemies.filter((p) => p.championId);
+  const roles = a?.enemyRoles ?? {};
+  for (const p of locked) {
+    const r = roles[p.championId];
+    if (r != null && !placed[r]) placed[r] = p.championId;
+  }
+  for (const p of locked) if (!placed.includes(p.championId)) placed[placed.indexOf(0)] = p.championId;
+  const theirs = placed.map((id, i) => `<div class="cell ${i === mineCol ? 'mine bottom' : ''}">${pic(id, { empty: true })}</div>`).join('');
+  return `<section class="grid">${head}<div class="rl">NOUS</div>${ours}<div class="rl">EUX</div>${theirs}</section>`;
+}
+
+function card(o, { flat = false, ref = false } = {}) {
+  const value = o.gain ?? o.delta;
+  const showNumber = value != null && !flat;
+  const half = o.p != null && o.high != null ? (o.high - o.low) / 2 : 0;
+  const pos = (x) => Math.max(0, Math.min(100, 50 + (x * 100 * 50) / SCALE_PTS));
+  const margin = showNumber && o.gain == null
+    ? `<div class="margin"><i style="left:${pos(value - half)}%;right:${100 - pos(value + half)}%"></i><b style="left:${pos(value)}%"></b></div>`
     : '';
-  const bench = d.kind === 'aram'
-    ? `<div><div class="row-label">Banc</div><div class="icons bench">${d.bench.map((id) => icon(id)).join('') || '<span class="muted">Vide</span>'}</div></div>`
+  const chips = (o.reasons ?? []).map((r) => `<span class="chip ${trend(r.delta)}">${esc(r.label)}<b>${pts(r.delta)}</b></span>`).join('');
+  // A long tag (bans) moves to the second line so the name never gets cut.
+  const tagInTitle = chips || (o.tag ?? '').length <= 12;
+  const abs = o.p != null
+    ? `<div class="abs">Chance de victoire estimée ${pct(o.p)} (entre ${pct(o.low)} et ${pct(o.high)})${o.n ? ` · ${o.n.toLocaleString('fr-FR')} parties analysées` : ''}</div>`
     : '';
-  const banList = (ids) => ids.map((id) => icon(id)).join('') || '<span class="muted">-</span>';
-  const bans = d.bans.ally.length || d.bans.enemy.length
-    ? `<div class="bans-wrap"><div><div class="row-label">Nos bans</div><div class="icons bans">${banList(d.bans.ally)}</div></div>
-       <div><div class="row-label">Leurs bans</div><div class="icons bans">${banList(d.bans.enemy)}</div></div></div>`
-    : '';
-  return `<section class="card board">
-    <div><div class="row-label">Ton équipe</div><div class="team">${d.allies.map((p) => slot(p, true)).join('')}</div></div>
-    ${bench}${enemies}${bans}
-  </section>`;
+  return `<article class="card ${ref ? 'ref' : ''} ${opened.has(o.championId) ? 'open' : ''}" data-id="${o.championId}">
+    ${o.close ? '<span class="eq">≈ égalité</span>' : ''}
+    ${img(o.championId, 'portrait')}
+    <div class="title"><span class="name">${esc(champName(o.championId))}</span>${tagInTitle ? `<span class="tag">${esc(o.tag ?? '')}</span>` : ''}</div>
+    <div class="num">${showNumber ? `<span class="big ${trend(value, 0.5)}">${pts(value)}<small>pt</small></span>${margin}` : ''}</div>
+    <div class="chips">${tagInTitle ? chips : `<span class="tag">${esc(o.tag)}</span>`}</div>
+    ${o.warn ? `<div class="warn">${esc(o.warn)}</div>` : ''}
+    ${abs}
+  </article>`;
+}
+
+function renderAdvice(d, a) {
+  if (!a) return '';
+  if (!a.options?.length) return a.note ? `<p class="note">${esc(a.note)}</p>` : '';
+  const flat = Boolean(a.flat);
+  let title = 'Tes meilleurs choix';
+  let right = a.reference ? `vs ${a.reference.label}` : '';
+  if (d.myTurn === 'ban') [title, right] = ['Bans conseillés', 'gain estimé'];
+  if (d.kind === 'aram') title = 'Sur le banc';
+  if (a.verb === 'Verrouillé') [title, right] = ['Ton champion', ''];
+  if (a.allClose) right = '≈ les 3 se valent';
+  if (flat) right = '';
+  const cards = a.options.map((o) => card(o, { flat })).join('');
+  const refCard = a.hover
+    ? `<div class="label"><span>Ton survol dans le client</span></div>${card(a.hover, { ref: true })}`
+    : a.current
+      ? `<div class="label"><span>Ton champion</span></div>${card(a.current, { ref: true, flat })}`
+      : '';
+  return `<div class="label"><span>${title}</span><b>${esc(right)}</b></div>${cards}${refCard}${a.note ? `<p class="note">${esc(a.note)}</p>` : ''}`;
 }
 
 function render() {
@@ -131,32 +151,46 @@ function render() {
     return;
   }
   const d = state.draft;
-  const phase = phaseLabel(d);
+  const a = state.advice;
+  const me = d.allies.find((p) => p.me);
+  const h = headline(d, a, me);
   const mode = state.queue?.name || QUEUES[d.queueId] || 'Partie';
+  const sub = [ROLE_NAMES[me?.role], mode].filter(Boolean).join(' · ');
   app.innerHTML = `
-    <header class="top">
-      <div><div class="mode">${esc(mode)}</div><div class="phase ${phase.mine ? 'mine' : ''}">${phase.text}</div></div>
-      <div class="timer" id="timer"></div>
+    <header class="head">
+      <div><h1 class="${h.mine ? 'mine' : ''} ${h.text.length > 14 ? 'long' : ''}">${esc(h.text)}</h1><div class="sub"><i class="dot"></i>${esc(sub)}</div></div>
+      <div class="ring" id="ring"><svg viewBox="0 0 58 58"><circle class="track" cx="29" cy="29" r="25"/><circle class="left" cx="29" cy="29" r="25" stroke-dasharray="157.1" stroke-dashoffset="0"/></svg><span></span></div>
     </header>
-    <div class="bar"><i id="bar"></i></div>
-    ${renderAdvice(state.advice)}
-    ${renderBoard(d)}`;
+    ${renderGrid(d, a)}
+    ${renderAdvice(d, a)}
+    <p class="legal">${LEGAL}</p>`;
   tick();
 }
 
+// A tap shows the absolute win chance; it stays open across live updates.
+app.addEventListener('click', (e) => {
+  const el = e.target.closest('.card');
+  if (!el) return;
+  const id = Number(el.dataset.id);
+  if (opened.has(id)) opened.delete(id);
+  else opened.add(id);
+  el.classList.toggle('open');
+});
+
 function tick() {
-  const t = document.getElementById('timer');
-  const bar = document.getElementById('bar');
-  if (!t) return;
+  const ring = document.getElementById('ring');
+  if (!ring) return;
+  const label = ring.querySelector('span');
+  const arc = ring.querySelector('.left');
   if (deadline == null) {
-    t.textContent = '';
-    bar.style.transform = 'scaleX(0)';
+    label.textContent = '';
+    arc.style.strokeDashoffset = '157.1';
     return;
   }
   const left = Math.max(0, deadline - Date.now());
-  t.textContent = Math.ceil(left / 1000);
-  t.classList.toggle('low', left < 8000);
-  bar.style.transform = `scaleX(${phaseTotal ? Math.min(1, left / phaseTotal) : 0})`;
+  label.textContent = Math.ceil(left / 1000);
+  ring.classList.toggle('low', left < 8000);
+  arc.style.strokeDashoffset = String(157.1 * (1 - (phaseTotal ? Math.min(1, left / phaseTotal) : 0)));
 }
 setInterval(tick, 250);
 
@@ -169,6 +203,7 @@ function onState(next) {
   } else {
     deadline = null;
   }
+  if (!d) opened.clear();
   const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, d && { ...d, timeLeftMs: 0 }, state.advice]);
   if (key !== lastKey) {
     lastKey = key;

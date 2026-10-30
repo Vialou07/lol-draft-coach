@@ -2,33 +2,37 @@
 // Read-only by design: this module only issues GET requests and subscribes to events.
 
 import { readFileSync, existsSync } from 'node:fs';
-import { execSync } from 'node:child_process';
 import https from 'node:https';
 import WebSocket from 'ws';
 
 const DEFAULT_LOCKFILE = 'C:/Riot Games/League of Legends/lockfile';
+const PRODUCT_SETTINGS = 'C:/ProgramData/Riot Games/Metadata/league_of_legends.live/league_of_legends.live.product_settings.yaml';
+
+// The Riot Client records where League is installed; no need to look at the running process.
+function installedLockfile() {
+  try {
+    const path = readFileSync(PRODUCT_SETTINGS, 'utf8').match(/product_install_full_path:\s*"?([^"\r\n]+)"?/)?.[1];
+    return path ? `${path.replace(/[\\/]+$/, '')}/lockfile` : null;
+  } catch {
+    return null;
+  }
+}
 
 // The LCU serves a self-signed Riot certificate, and we only ever talk to 127.0.0.1.
 const tls = { rejectUnauthorized: false };
 
-export function findClient(lockfile = process.env.LCU_LOCKFILE ?? DEFAULT_LOCKFILE) {
-  if (existsSync(lockfile)) {
-    const [, , port, password] = readFileSync(lockfile, 'utf8').split(':');
-    if (port && password) return { port, password };
+export function findClient(lockfile) {
+  const candidates = lockfile ? [lockfile] : process.env.LCU_LOCKFILE ? [process.env.LCU_LOCKFILE] : [DEFAULT_LOCKFILE, installedLockfile()];
+  for (const file of candidates) {
+    if (!file || !existsSync(file)) continue;
+    try {
+      const [, , port, password] = readFileSync(file, 'utf8').split(':');
+      if (port && password) return { port, password };
+    } catch {
+      // the client may be rewriting it
+    }
   }
-  if (process.env.LCU_LOCKFILE || process.platform !== 'win32') return null;
-  // Non-default install folder: read the running client's own command line.
-  try {
-    const cmd = execSync(
-      `powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \\"name='LeagueClientUx.exe'\\").CommandLine"`,
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
-    );
-    const port = cmd.match(/--app-port=(\d+)/)?.[1];
-    const password = cmd.match(/--remoting-auth-token=([\w-]+)/)?.[1];
-    return port && password ? { port, password } : null;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 export function get(client, path) {

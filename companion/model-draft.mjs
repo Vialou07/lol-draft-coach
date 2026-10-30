@@ -5,13 +5,16 @@
 
 import { ROLE_INDEX } from './stats-draft.mjs';
 
-const N0_META = 1600;
-const N0_LANE = [530, 1190, 730, 1150, 1070]; // same-role matchup, by role
+// Prior strengths from study 07: a champion's patch winrate is pulled hard towards its
+// 30-day winrate (n0 15 000 for an unchanged champion), lane matchups less so.
+const N0_META = 15000;
+const N0_LANE = [480, 1100, 600, 1300, 1000]; // same-role matchup, by role
 const N0_BOT_SUP = 1480; // bot against the enemy support and the reverse
 const N0_CROSS = 2500;
 const N0_SYN_BOT_SUP = 1890;
 const N0_SYN_OTHER = 5000;
-const GAMMA = { meta: 1, lane: 1, cross: 0.5, syn: 0.7, comp: 1 };
+// Version 1 keeps only the terms study 07 found solid; the others wait for a backtest.
+const GAMMA = { meta: 1, lane: 1, cross: 0, syn: 0.7, comp: 1 };
 const SR_QUEUES = new Set([400, 420, 430, 440, 480, 490, 700]);
 const MIN_ROLE_SHARE = 0.03;
 
@@ -70,7 +73,7 @@ export function createDraftModel(stats, { difficulty = {} } = {}) {
 
   function synergy(c, r, a, ra) {
     const [lo, hi] = r < ra ? [r, ra] : [ra, r];
-    if (lo === 0 && hi !== 1) return { value: 0, variance: 0, games: 0 }; // top with mid/bot/support: noise
+    if (!(lo === 3 && hi === 4)) return { value: 0, variance: 0, games: 0 }; // only bot + support in version 1
     const n0 = lo === 3 && hi === 4 ? N0_SYN_BOT_SUP : N0_SYN_OTHER;
     const expected = sigmoid(rawLogit(c, r) + rawLogit(a, ra));
     const { g, w } = pairRecord('sy', c, r, a, ra, false);
@@ -109,11 +112,10 @@ export function createDraftModel(stats, { difficulty = {} } = {}) {
     }
     // Post-14.10 mastery points: roughly 1000 per game [assumption, to calibrate].
     const experience = Math.max(games, (p?.mastery ?? 0) / 1000);
-    const d = difficulty[key] ?? 5;
-    const A = 0.16 + (0.24 * (Math.min(10, Math.max(1, d)) - 1)) / 9;
-    const curve = -A * Math.exp(-experience / 8) + 0.15 * A; // relative to the average player of this champion
-    const form = (wins - 0.5 * games) / (0.25 * games + 25);
-    return { value: curve + form, variance: games ? 1 / (0.25 * games + 25) : 0, experience, games, wins };
+    // Fixed steps (study 07): about −6 points never played, −3 points under 10 games.
+    // A personal winrate over a few dozen games is noise, so it is not used.
+    const value = experience < 1 ? -0.24 : experience < 10 ? -0.12 : 0;
+    return { value, variance: 0, experience, games, wins };
   }
 
   function compTerm(physShares) {
@@ -122,7 +124,14 @@ export function createDraftModel(stats, { difficulty = {} } = {}) {
     return GAMMA.comp * (-0.8 * Math.max(0, 0.25 - s) - 0.8 * Math.max(0, s - 0.85));
   }
 
-  return { rec, share, roleTotals, meta, matchup, synergy, enemyAssignments, mastery, compTerm, rawLogit };
+  // Version 1 flags an unbalanced damage mix without putting a number on it (study 07).
+  function compWarning(physShares) {
+    if (physShares.length < 4) return '';
+    const s = physShares.reduce((a, b) => a + b, 0) / physShares.length;
+    return s < 0.2 ? 'Équipe presque full AP' : s > 0.85 ? 'Équipe presque full AD' : '';
+  }
+
+  return { rec, share, roleTotals, meta, matchup, synergy, enemyAssignments, mastery, compTerm, compWarning, rawLogit };
 }
 
 export { ROLE_INDEX, sigmoid, logit };
