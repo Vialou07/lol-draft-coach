@@ -53,6 +53,21 @@ export function get(client, path) {
   });
 }
 
+export function getBinary(client, path) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      { host: '127.0.0.1', port: client.port, path, auth: `riot:${client.password}`, timeout: 5000, ...tls },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => (res.statusCode === 200 ? resolve(Buffer.concat(chunks)) : reject(new Error(`${res.statusCode} ${path}`))));
+      },
+    );
+    req.on('timeout', () => req.destroy(new Error(`timeout ${path}`)));
+    req.on('error', reject);
+  });
+}
+
 // Optional data: a missing endpoint must never stop the app.
 export const tryGet = (client, path) => get(client, path).catch(() => null);
 

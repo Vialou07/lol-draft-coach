@@ -64,6 +64,7 @@ export function draftState(session, { gameMode = '' } = {}) {
     queueId: session.queueId ?? 0,
     phase: session.timer?.phase ?? '',
     timeLeftMs: session.timer?.isInfinite ? null : session.timer?.adjustedTimeLeftInPhase ?? null,
+    phaseTotalMs: session.timer?.totalTimeInPhase ?? null,
     myTurn: mine ? mine.type : null,
     acting: inProgress.length
       ? inProgress.some((a) => isAlly(a)) ? (inProgress.some((a) => !isAlly(a)) ? 'both' : 'ally') : 'enemy'

@@ -18,12 +18,19 @@ export function lanUrls(port) {
     .map((i) => `http://${i.address}:${port}`);
 }
 
-export function startServer({ port, host = '0.0.0.0', snapshot }) {
+export function startServer({ port, host = '0.0.0.0', snapshot, icon = async () => null }) {
   const server = http.createServer(async (req, res) => {
     const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     if (path === '/state') {
       res.writeHead(200, { 'Content-Type': TYPES['.json'], 'Cache-Control': 'no-store' });
       return res.end(JSON.stringify(snapshot()));
+    }
+    const iconId = path.match(/^\/icon\/(\d+)$/)?.[1];
+    if (iconId) {
+      const png = await icon(Number(iconId)).catch(() => null);
+      if (!png) return res.writeHead(404).end();
+      res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'max-age=86400' });
+      return res.end(png);
     }
     const file = normalize(join(WEB_DIR, path === '/' ? 'index.html' : path));
     if (!file.startsWith(normalize(WEB_DIR))) return res.writeHead(403).end();
@@ -37,6 +44,7 @@ export function startServer({ port, host = '0.0.0.0', snapshot }) {
   });
 
   const wss = new WebSocketServer({ server, path: '/ws' });
+  wss.on('error', () => {}); // listen errors are reported by the promise below
   wss.on('connection', (ws) => ws.send(JSON.stringify(snapshot())));
 
   const broadcast = () => {

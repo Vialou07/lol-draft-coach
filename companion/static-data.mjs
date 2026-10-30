@@ -1,0 +1,29 @@
+// Static champion data from Data Dragon (difficulty, classes), cached per patch.
+
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+
+const DIR = new URL('../data/local/', import.meta.url);
+
+export function championInfo(ddragon) {
+  return Object.fromEntries(
+    Object.values(ddragon.data).map((c) => [c.key, { difficulty: c.info?.difficulty ?? 5, tags: c.tags ?? [], defense: c.info?.defense ?? 0 }]),
+  );
+}
+
+export async function loadChampionInfo(version) {
+  const file = new URL(`ddragon-${version}.json`, DIR);
+  try {
+    return championInfo(JSON.parse(await readFile(file, 'utf8')));
+  } catch {
+    // not cached yet
+  }
+  try {
+    const res = await fetch(`https://ddragon.leagueoflegends.com/cdn/${version}/data/fr_FR/champion.json`, { signal: AbortSignal.timeout(15000) });
+    const body = await res.text();
+    await mkdir(DIR, { recursive: true });
+    await writeFile(file, body);
+    return championInfo(JSON.parse(body));
+  } catch {
+    return {};
+  }
+}

@@ -6,7 +6,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { startFakeClient, loadFixture } from './fake-client.mjs';
-import { startCompanion } from '../companion/app.mjs';
+import { startCompanion as start } from '../companion/app.mjs';
+import { readFileSync } from 'node:fs';
+import { championInfo } from '../companion/static-data.mjs';
+
+// Frozen stats so the tests never depend on the network.
+const read = (p) => JSON.parse(readFileSync(new URL(p, import.meta.url), 'utf8'));
+const stats = { draft: read('./fixtures/draft-stats-mini.json') };
+const info = championInfo(read('./fixtures/ddragon-champions.json'));
+const startCompanion = (opts) => start({ ...opts, loadStats: async () => stats, loadInfo: async () => info });
 
 const waitFor = async (check, ms = 8000) => {
   const end = Date.now() + ms;
@@ -50,6 +58,9 @@ test('ranked solo: the page receives the live draft, then the end of champ selec
     assert.equal(r.states.at(-1).draft, null);
     assert.equal(r.states.at(-1).summoner?.gameName, 'Testeur');
     assert.ok(Object.keys(r.states.at(-1).champions).length > 150);
+    const withAdvice = drafts.filter((s) => s.advice?.options?.length);
+    assert.ok(withAdvice.length > 0, 'advice reached the page');
+    assert.ok(withAdvice.some((s) => s.advice.verb === 'Pick conseillé'), 'pick advice during my turn');
   } finally {
     await cleanup(r);
   }

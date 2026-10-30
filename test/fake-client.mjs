@@ -24,7 +24,7 @@ export function loadFixture(file) {
   return read(`./fixtures/real/${file}`);
 }
 
-export async function startFakeClient({ fixture, lockfile, speed = 20, minGapMs = 5, profile = defaultProfile() }) {
+export async function startFakeClient({ fixture, lockfile, speed = 20, minGapMs = 5, holdAtEnd = false, profile = defaultProfile() }) {
   let phase = 'Lobby';
   let session = null;
   const sockets = new Set();
@@ -93,6 +93,7 @@ export async function startFakeClient({ fixture, lockfile, speed = 20, minGapMs 
         session = e.session;
         push(topic, i === 0 ? 'Create' : 'Update', session, uri);
       }
+      if (holdAtEnd) return;
       await sleep(minGapMs);
       session = null;
       push(topic, 'Delete', null, uri);
