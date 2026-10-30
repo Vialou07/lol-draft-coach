@@ -314,11 +314,6 @@ svg.gold .kill.us { fill: var(--pos); }
 svg.gold .kill.them { fill: var(--neg); }
 @keyframes pop { from { transform: scale(0); opacity: 0; } 60% { transform: scale(1.8); opacity: 1; } to { transform: scale(1); } }
 .chart-foot { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); margin-top: 4px; }
-.feed .feed-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid var(--line-2); font-size: 13.5px; animation: rise 0.4s var(--ease) both; }
-.feed .feed-row:first-of-type { border-top: 0; }
-.feed-row.up span:last-child { color: var(--text); }
-.feed-row.down span:last-child { color: #f7b3bc; }
-.feed-t { font-size: 11.5px; color: var(--faint); width: 34px; flex: none; font-feature-settings: "tnum" 1; }
 .timers { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 6px; }
 
 /* After the game: bars that grow, then slide when you switch what they measure */
@@ -352,6 +347,33 @@ svg.gold .kill.them { fill: var(--neg); }
 .bname { position: relative; display: flex; align-items: baseline; gap: 6px; padding: 0 8px; line-height: 28px; font-size: 12.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bname small { font-weight: 600; opacity: 0.7; }
 .bval { font-family: var(--disp); font-size: 17px; font-weight: 800; min-width: 52px; text-align: right; }
+
+/* In game: who does what */
+.roles .role-row { display: grid; grid-template-columns: 26px minmax(0, 1fr) 64px; gap: 10px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line-2); }
+.roles .role-row:first-of-type, .roles .arow + .role-row { border-top: 0; }
+.role-row.me .role-name b { color: var(--gold); }
+.role-name { display: flex; align-items: center; gap: 6px; }
+.role-name b { font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.threat { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--neg); background: var(--neg-soft); border-radius: 6px; padding: 2px 6px; }
+.role-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.rtag { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 6px; background: var(--surface-2); color: var(--muted); }
+.rtag.tank { color: #9fc3ff; }
+.rtag.engage { color: var(--gold); }
+.rtag.heal { color: var(--pos); }
+.rtag.cc { color: #c9a8ff; }
+.rtag.poke { color: #ffb37a; }
+.rtag.carry { color: var(--neg); }
+.rtag.dmg-ad { color: var(--ad); }
+.rtag.dmg-ap { color: var(--ap); }
+.role-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.share { width: 64px; height: 5px; border-radius: 5px; background: var(--line-2); overflow: hidden; }
+.share i { display: block; height: 100%; background: var(--text); opacity: 0.55; border-radius: 5px; transition: width 0.6s var(--ease); }
+.augments .aug-row { display: grid; grid-template-columns: 78px 1fr; gap: 8px; align-items: start; padding: 6px 0; }
+.aug-r { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 6px; color: var(--muted); }
+.aug-r.kPrismatic { color: #c9a8ff; }
+.aug-r.kGold { color: var(--gold); }
+.aug b { margin-left: 4px; color: var(--pos); }
+.aug.kSilver { box-shadow: inset 0 0 0 1px rgba(200, 210, 225, 0.35); }
 
 .abody.list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 10px; }
 

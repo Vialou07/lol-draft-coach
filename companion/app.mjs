@@ -25,6 +25,8 @@ import { loadItems } from './items.mjs';
 import { createDraftModel } from './model-draft.mjs';
 import { trackLive } from './live-track.mjs';
 import { gameRecap, augmentInfo } from './recap.mjs';
+import { loadMayhemDb } from './stats-mayhem-db.mjs';
+import { teamRoles, augmentAdvice } from './roles.mjs';
 
 const RETRY_MS = 3000;
 // Demos replay real recorded champ selects (anonymised fixtures) so the page can be seen
@@ -37,6 +39,7 @@ const DEMO_SPEED = 1.5;
 const LIVE_POLL_MS = 3000;
 const BUILD_RETRY_MS = 30000;
 const IN_GAME = ['ChampSelect', 'GameStart', 'InProgress', 'Reconnect'];
+const MAYHEM = new Set([2400, 2401, 2403, 2405]);
 const RECORD_EVERY = 15; // seconds of game time between two reads kept in live-last.jsonl
 const RECAP_TRIES = 12; // the client files the game a few seconds after the end
 const RECAP_WAIT_MS = 10000;
@@ -84,8 +87,8 @@ async function latestDdragon() {
 
 const defaultStats = async ({ onLog, info }) => {
   const keyById = Object.fromEntries(Object.entries(info).map(([key, c]) => [c.id, key]));
-  const [draft, mayhem] = await Promise.all([loadDraftStats({ onLog }), loadMayhemStats(keyById, { onLog })]);
-  return { draft, mayhem };
+  const [draft, mayhem, mayhemDb] = await Promise.all([loadDraftStats({ onLog }), loadMayhemStats(keyById, { onLog }), loadMayhemDb({ onLog })]);
+  return { draft, mayhem, mayhemDb };
 };
 
 export async function startCompanion({ port = 4317, host, lockfile, onLog = () => {}, loadStats = defaultStats, loadInfo = loadChampionInfo, loadAttrs = loadAttributes, loadElo = loadEloStats, share = true, readLive = readLiveGame, getBuild = loadBuild, getItems = loadItems, livePollMs = LIVE_POLL_MS } = {}) {
@@ -290,7 +293,9 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     if (!advice) return;
     liveTrack = trackLive(liveTrack, live, { items, championOf: (p) => Number(championKeyOf(p, info)) || null });
     const ids = new Set([...advice.path.map((p) => p.item), ...advice.adapt.map((a) => a.item), ...advice.alternatives.map((a) => a.item), advice.buy?.item, advice.buy?.for].filter(Boolean));
-    state.game = { ...advice, itemNames: Object.fromEntries([...ids].map((id) => [id, items[id]?.name ?? String(id)])), live: liveTrack?.view ?? null, at: Date.now() };
+    const roles = teamRoles(live, { items, info, db: stats.mayhemDb, keyOf: (p) => championKeyOf(p, info), physOf: (k) => physOf(k) });
+    const augs = /KIWI/.test(mode) ? augmentAdvice(key, { db: stats.mayhemDb, names: await augmentNames() }) : null;
+    state.game = { ...advice, itemNames: Object.fromEntries([...ids].map((id) => [id, items[id]?.name ?? String(id)])), live: liveTrack?.view ?? null, roles, augments: augs, at: Date.now() };
     changed();
   };
 
@@ -444,6 +449,14 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     const an = (mine && state.advice?.analysisFor?.[mine]) ?? state.advice?.analysis;
     if (!state.draft || !an) return;
     state.plan = { championId: an.championId, kind: state.draft.kind, lane: an.lane ?? null, timing: an.timing ?? null, needs: an.needs ?? [], teams: an.teams ?? null };
+    if (MAYHEM.has(state.draft.queueId)) {
+      const plan = state.plan;
+      augmentNames().then((names) => {
+        if (state.plan !== plan) return;
+        plan.augments = augmentAdvice(String(plan.championId), { db: stats.mayhemDb, names });
+        changed();
+      });
+    }
   };
 
   const onSession = (session) => {
@@ -705,7 +718,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       stats = s ?? {};
       refreshElo();
       const count = (x) => (x ? `${x.version ?? '?'}, ${Object.keys(x.champs ?? {}).length} champions` : 'absentes');
-      onLog(`Stats : draft ${count(stats.draft)} · ARAM du Chaos ${count(stats.mayhem)}`);
+      onLog(`Stats : draft ${count(stats.draft)} · ARAM du Chaos ${count(stats.mayhemDb ?? stats.mayhem)}`);
     })
     .then(() => {
     advise();

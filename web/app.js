@@ -140,11 +140,6 @@ function renderWaiting() {
     const text = { Matchmaking: 'Recherche de partie', ReadyCheck: 'Partie trouvée', Lobby: 'Dans le salon' }[state.gameflow] ?? 'Connecté';
     body = `<div class="pulse ok"></div><h1>${text}</h1><p>Les conseils apparaissent dès la sélection des champions.</p>`;
   }
-  const demo = `<section class="tile">
-      <div class="tile-title">Voir une démo</div>
-      <p>Rejoue une de tes vraies sélections, pour voir l'écran avant une partie.</p>
-      <div class="buttons"><button data-demo="ranked">Ranked solo</button><button data-demo="aram">ARAM du Chaos</button><button data-demo="game">En partie</button><button data-demo="recap">Après la partie</button></div>
-    </section>`;
   const qr = onPc && phone?.groupQr
     ? `<section class="tile phone"><div class="qr">${phone.groupQr}</div><div>
         <div class="tile-title">Le lien du groupe</div>
@@ -168,7 +163,7 @@ function renderWaiting() {
       <datalist id="champ-names">${names.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
     </section>`;
   const version = state?.version ? `<p class="note">Version ${esc(state.version)}${state.update?.status === 'ready' ? ` · la ${esc(state.update.version)} s'installera après ta partie` : ''}</p>` : '';
-  return `${updateBanner()}<section class="wait">${body}</section>${who}${renderRecap(state?.recap)}<div class="tiles">${renderProfile()}${demo}${learn}${qr}</div>${version}<p class="legal">${LEGAL}</p>`;
+  return `${updateBanner()}<section class="wait">${body}</section>${who}${renderRecap(state?.recap)}<div class="tiles">${renderProfile()}${learn}${qr}</div>${version}<p class="legal">${LEGAL}</p>`;
 }
 
 // Your last games as a row of portraits, green for a win, red for a loss; today's count first.
@@ -352,6 +347,7 @@ function renderPlan() {
 
 function renderLoading() {
   return `${renderPeople()}<header class="head"><div><h1>Chargement</h1><div class="sub"><i class="dot"></i>${esc(champName(state.plan.championId))}</div></div></header>
+    ${renderAugments(state.plan.augments)}
     ${renderPlan()}
     <p class="note">Les conseils de build arrivent dès que la partie démarre.</p>
     <p class="legal">${LEGAL}</p>`;
@@ -388,19 +384,6 @@ function renderGame() {
     ? `<div class="label"><span>Adapté à leur compo</span><b>à toi de voir</b></div>
       <section class="analysis">${adaptList.map((a) => `<div class="arow"><span class="trap">${itemIcon(a.item, 'mini-item')}<span class="aname">${esc(name(a.item))}</span></span><div class="abody"><span class="muted small">${esc(a.reason)}</span></div></div>`).join('')}</section>`
     : '';
-  const e = g.enemy ?? {};
-  const sig = e.signals ?? {};
-  const bought = [[sig.crit, 'critiques'], [sig.attackSpeed, 'vitesse d’attaque'], [sig.lifesteal, 'vol de vie'], [sig.armor, 'armure'], [sig.magicResist, 'résistance magique']]
-    .filter(([n]) => n >= 2)
-    .map(([n, label]) => `<span class="chip">${n} ${label}</span>`)
-    .join('');
-  const enemyRows = [
-    e.threat ? `<div class="arow"><span class="alabel">S'envole</span><div class="abody">${mini(e.threat.championId)}<span class="aname">${esc(champName(e.threat.championId))}</span><span class="muted small">${golds(e.threat.value)} d'items${e.threat.kda ? ` · ${esc(e.threat.kda)}` : ''}</span></div></div>` : '',
-    bought ? `<div class="arow"><span class="alabel">Leurs items</span><div class="abody">${bought}</div></div>` : '',
-    e.physical != null ? `<div class="arow"><span class="alabel">Leurs dégâts</span><div class="abody">${damageBar({ physical: e.physical })}</div></div>` : '',
-    e.healers?.length ? `<div class="arow"><span class="alabel">Soins</span><div class="abody">${e.healers.map((id) => `<span class="duo">${mini(id)}<span class="small">${esc(champName(id))}</span></span>`).join('')}</div></div>` : '',
-    `<div class="arow"><span class="alabel">Tanks</span><div class="abody"><b>${e.tanks ?? 0}</b></div></div>`,
-  ].join('');
   const skills = g.skills?.priority
     ? `<p class="skillrow">Sorts à monter <b class="skills">${esc(g.skills.priority.split('').join(' › '))}</b><span class="muted small">départ ${esc(g.skills.start.join(' '))}</span></p>`
     : '';
@@ -427,12 +410,11 @@ function renderGame() {
         ${styleNote}
       </div>
       <div class="col">
+        ${renderAugments(g.augments)}
+        ${renderRoles(g)}
         ${renderGoldChart(g)}
-        ${renderFeed(g)}
         ${renderPlan()}
         ${adapt}
-        <div class="label"><span>Eux</span></div>
-        <section class="analysis">${enemyRows}</section>
         <p class="note">${esc(source)}</p>
       </div>
     </div>
@@ -492,18 +474,50 @@ function renderGoldChart(g) {
         ${kills}
       </svg>
       <div class="chart-foot"><span>Vous ${num(lv.gold.us, 'int')} po</span><span>${clock(lv.t)}</span><span>Eux ${num(lv.gold.them, 'int')} po</span></div>
+      ${renderTimers(g)}
     </section>`;
 }
 
-// What just happened, newest first: an enemy's big item, a multikill, an inhibitor down.
-function renderFeed(g) {
+// Objectives coming back (Summoner's Rift), counted down from the kill seen in the events.
+function renderTimers(g) {
   const lv = g.live;
   const timers = (lv?.timers ?? []).map((t) => `<span class="chip ${t.ally ? 'up' : 'down'}">${{ inhib: t.ally ? 'Leur inhib' : 'Votre inhib', dragon: 'Dragon', baron: 'Baron' }[t.kind]} <b data-until="${g.at + (t.back - lv.t) * 1000}" data-clock="1">${clock(t.back - lv.t)}</b></span>`).join('');
-  if (!lv?.feed?.length && !timers) return '';
-  const rows = (lv.feed ?? []).map((f) => `<div class="feed-row ${f.ally ? 'up' : f.ally === false ? 'down' : ''}" id="feed-${f.t}-${esc(f.kind)}-${f.championId ?? 0}">
-      <span class="feed-t">${clock(f.t)}</span>${f.item ? itemIcon(f.item, 'mini-item') : f.championId ? mini(f.championId) : ''}<span>${esc(f.text)}</span></div>`).join('');
-  return `<div class="label"><span>Moments clés</span>${timers ? '<b>repop</b>' : ''}</div>
-    <section class="analysis feed">${timers ? `<div class="timers">${timers}</div>` : ''}${rows}</section>`;
+  return timers ? `<div class="timers">${timers}</div>` : '';
+}
+
+// Who does what on each side: measured roles, damage type, items, and the two players most
+// likely to deal their team's damage (an estimate: Riot gives damage only after the game).
+const gk = (n) => `${(n / 1000).toFixed(1).replace('.', ',')} k`;
+function renderRoles(g) {
+  const r = g.roles;
+  if (!r) return '';
+  const maxShare = Math.max(...[...r.enemies, ...r.allies].map((x) => x.threat));
+  const row = (x) => `<div class="role-row ${x.me ? 'me' : ''}" id="role-${x.championId}">
+      ${mini(x.championId)}
+      <div class="role-main"><div class="role-name"><b>${esc(champName(x.championId) ?? x.name)}</b>${x.top && !x.ally ? '<span class="threat">menace</span>' : ''}</div>
+        <div class="role-tags">${x.roles.map((t) => `<span class="rtag ${ROLE_CLASS[t] ?? ''}">${esc(t)}</span>`).join('')}${x.damage ? `<span class="rtag dmg-${x.damage.toLowerCase()}">${x.damage}</span>` : ''}</div></div>
+      <div class="role-side"><span class="small muted">${gk(x.gold)}</span><div class="share"><i style="width:${((x.threat / maxShare) * 100).toFixed(0)}%"></i></div></div>
+    </div>`;
+  const physical = g.enemy?.physical;
+  return `<div class="label"><span>Leur équipe</span><b>rôles · dégâts estimés</b></div>
+    <section class="analysis roles">
+      ${physical != null ? `<div class="arow"><span class="alabel">Leurs dégâts</span><div class="abody">${damageBar({ physical })}</div></div>` : ''}
+      ${r.enemies.map(row).join('')}
+    </section>
+    <div class="label"><span>Ton équipe</span></div>
+    <section class="analysis roles">${r.allies.map(row).join('')}</section>
+    <p class="note">Barre : part estimée des dégâts de l'équipe, d'après items, kills et type de champion. Les 2 « menaces » contiennent leur vrai n°1 des dégâts ${THREAT_HIT}. Rôles mesurés sur des parties ARAM du Chaos (serveur TW).</p>`;
+}
+const ROLE_CLASS = { Tank: 'tank', Engage: 'engage', Soins: 'heal', Contrôles: 'cc', Poke: 'poke', 'Gros dégâts': 'carry' };
+const THREAT_HIT = '35 fois sur 40 dans tes 20 dernières parties';
+
+// ARAM Mayhem: the augments that win most with your champion, by rarity.
+const RARITY = { kPrismatic: 'Prismatique', kGold: 'Or', kSilver: 'Argent' };
+function renderAugments(a) {
+  if (!a?.byRarity) return '';
+  const rows = Object.entries(a.byRarity).map(([rarity, list]) => `<div class="aug-row"><span class="aug-r ${rarity}">${RARITY[rarity]}</span><div class="augs">${list.map((x) => `<span class="aug ${rarity}">${x.icon ? `<img src="${esc(x.icon)}" alt="">` : ''}${esc(x.name)}<b>${pts(x.lift)}</b></span>`).join('')}</div></div>`).join('');
+  return `<div class="label"><span>Augments forts</span><b>pour ${esc(champName(a.championId))}</b></div>
+    <section class="analysis augments">${rows}<p class="note">Points de victoire en plus quand ${esc(champName(a.championId))} prend cet augment, sur au moins 500 parties (${esc(a.source)}, patch ${esc(a.version ?? '?')}).</p></section>`;
 }
 
 // After the game: the ten players side by side, the bars grow and slide when you switch.
@@ -589,7 +603,8 @@ function aramRanking(a) {
   const pos = (x) => Math.max(0, Math.min(100, ((x - SCALE[0]) / (SCALE[1] - SCALE[0])) * 100));
   return `<section class="ranking">${a.options.map((o, i) => {
     const advice = o.championId === a.focus && !a.flat;
-    const tag = o.mine ? 'ton champion' : o.takenBy ? `plutôt pour ${o.takenBy}` : 'banc';
+    const games = o.n ? ` · ${o.n >= 1000 ? `${Math.round(o.n / 1000)} k` : o.n} parties` : '';
+    const tag = `${o.mine ? 'ton champion' : o.takenBy ? `plutôt pour ${o.takenBy}` : 'banc'}${games}`;
     return `<article id="rank-${o.championId}" class="rank ${advice ? 'advice' : ''} ${o.mine ? 'mine' : ''} ${o.takenBy ? 'taken' : ''}">
         <span class="rk">${i + 1}</span>${img(o.championId)}
         <div class="rname"><b>${esc(champName(o.championId))}</b><small>${esc(tag)}</small></div>
@@ -620,7 +635,7 @@ function renderAdvice(d, a) {
   const legend = aram && flat
     ? ''
     : aram
-    ? '<p class="legend">Ton champion et tout le banc, classés par winrate dans le mode (tel que la source le publie). Barre verte : plus de 50 % de victoires, rouge : moins. Le cadre doré est le conseil : on ne te dit de changer que pour au moins un point de plus.</p>'
+    ? '<p class="legend">Ton champion et tout le banc, classés par winrate dans le mode (un champion peu joué est ramené vers 50 %). Barre verte : plus de 50 % de victoires, rouge : moins. Le cadre doré est le conseil : on ne te dit de changer que pour au moins un point de plus.</p>'
     : !flat && d.myTurn !== 'ban' && a.options.some((o) => o.p != null)
       ? '<p class="legend">Ligne blanche = 50 %. Un point de plus = une victoire de plus sur 100 parties. Entre deux bons choix, l’écart est souvent de 1 à 4 points.</p>'
       : '';

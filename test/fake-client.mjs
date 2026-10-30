@@ -25,7 +25,7 @@ export function loadFixture(file) {
   return read(`./fixtures/real/${file}`);
 }
 
-export async function startFakeClient({ fixture, lockfile, speed = 20, minGapMs = 5, holdAtEnd = false, profile = defaultProfile() }) {
+export async function startFakeClient({ fixture, lockfile, speed = 20, minGapMs = 5, holdAtEnd = false, profile = defaultProfile(), augmentList = augments }) {
   let phase = 'Lobby';
   let session = null;
   const sockets = new Set();
@@ -38,7 +38,7 @@ export async function startFakeClient({ fixture, lockfile, speed = 20, minGapMs 
     '/lol-champ-select/v1/session': () => session,
     '/lol-champion-mastery/v1/local-player/champion-mastery': () => profile.mastery,
     '/lol-ranked/v1/current-ranked-stats': () => profile.ranked,
-    '/lol-game-data/assets/v1/cherry-augments.json': () => augments,
+    '/lol-game-data/assets/v1/cherry-augments.json': () => augmentList,
   };
 
   const key = readFileSync(new URL('./certs/key.pem', import.meta.url));
