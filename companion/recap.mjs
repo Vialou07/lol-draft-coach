@@ -19,13 +19,14 @@ export function gameRecap(detail, { puuid, augments = {} } = {}) {
   const ident = detail?.participantIdentities?.find((i) => i.player?.puuid === puuid);
   const me = detail?.participants?.find((p) => p.participantId === ident?.participantId);
   if (!me) return null;
-  const nameOf = (p) => detail.participantIdentities.find((i) => i.participantId === p.participantId)?.player?.gameName ?? '';
+  const who = (p) => detail.participantIdentities.find((i) => i.participantId === p.participantId)?.player ?? {};
   const players = detail.participants.map((p) => {
     const s = p.stats ?? {};
     return {
       id: p.participantId,
       championId: p.championId,
-      name: nameOf(p),
+      name: who(p).gameName ?? '',
+      puuid: who(p).puuid ?? null,
       ally: p.teamId === me.teamId,
       me: p === me,
       kills: s.kills ?? 0,

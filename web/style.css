@@ -375,6 +375,18 @@ svg.gold .kill.them { fill: var(--neg); }
 .aug b { margin-left: 4px; color: var(--pos); }
 .aug.kSilver { box-shadow: inset 0 0 0 1px rgba(200, 210, 225, 0.35); }
 
+/* The evening */
+.titles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.title-card { background: var(--surface-2); border-radius: 12px; padding: 8px 10px; display: flex; flex-direction: column; gap: 1px; animation: rise 0.4s var(--ease) both; }
+.title-card span { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: var(--gold); }
+.title-card b { font-family: var(--disp); font-size: 19px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.title-card small { font-size: 11.5px; color: var(--muted); }
+.ev-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+.ev-game { display: flex; gap: 2px; padding: 3px; border-radius: 10px; box-shadow: inset 0 0 0 2px var(--neg); }
+.ev-game.win { box-shadow: inset 0 0 0 2px var(--pos); }
+.ev-game img { width: 26px; height: 26px; border-radius: 7px; }
+@media (min-width: 900px) { .titles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
 .abody.list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 10px; }
 
 @media (min-width: 900px) {

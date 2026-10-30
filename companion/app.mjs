@@ -27,6 +27,7 @@ import { trackLive } from './live-track.mjs';
 import { gameRecap, augmentInfo } from './recap.mjs';
 import { loadMayhemDb } from './stats-mayhem-db.mjs';
 import { teamRoles, augmentAdvice } from './roles.mjs';
+import { eveningGame, eveningStart, loadEvenings, saveEveningGame, tonight } from './evening.mjs';
 
 const RETRY_MS = 3000;
 // Demos replay real recorded champ selects (anonymised fixtures) so the page can be seen
@@ -137,6 +138,8 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   let aramViews = null; // ARAM: the whole team's views, with the shared bench split between players
   const friendProfiles = new Map();
   let friends = new Set(); // puuids from the client's friend list
+  let evenings = await loadEvenings();
+  state.evening = { games: tonight(evenings) };
 
   // Group sharing: friends follow their own draft on their phone through the group link.
   let group = share ? await loadGroup().catch(() => null) : null;
@@ -210,7 +213,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       ? []
       : aramViews ?? [{ cellId: state.draft.allies.find((p) => p.me)?.cellId, name: state.summoner?.gameName ?? 'Moi', self: true, draft: state.draft, advice: state.advice }, ...allyViews()];
     const ids = new Set();
-    JSON.stringify([views, state.game, state.plan, state.recap], (k, v) => {
+    JSON.stringify([views, state.game, state.plan, state.recap, state.evening], (k, v) => {
       if (/^(championId|hoverId|opponentId|vsId)$/.test(k) && v > 0) ids.add(String(v));
       if (k === 'bench' || k === 'ally' || k === 'enemy' || k === 'healers') v?.forEach?.((id) => ids.add(String(id)));
       return v;
@@ -228,6 +231,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       game: state.game,
       plan: ['GameStart', 'InProgress'].includes(state.gameflow) ? state.plan : null,
       recap: state.status === 'champ-select' ? null : state.recap ?? null,
+      evening: state.evening,
     };
   };
 
@@ -346,6 +350,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
         state.recap = gameRecap(detail, { puuid: me?.puuid, augments: await augmentNames() });
         if (state.recap) {
           onLog(`Récap de la partie ${gameId} : ${state.recap.win ? 'victoire' : 'défaite'}`);
+          await addEvening(state.recap);
           changed();
         }
         return;
@@ -353,6 +358,24 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       await new Promise((r) => setTimeout(r, RECAP_WAIT_MS));
     }
   };
+  // The evening board: each finished game joins it, with you and your friends in it.
+  const addEvening = async (recap) => {
+    evenings = await saveEveningGame(evenings, eveningGame(recap, { friends })).catch(() => evenings);
+    state.evening = { games: tonight(evenings) };
+  };
+  // Tonight's games played before the app was started, from the client's history.
+  const backfillEvening = async (c) => {
+    const me = await tryGet(c, '/lol-summoner/v1/current-summoner');
+    const since = eveningStart();
+    for (const g of profile?.recent ?? []) {
+      if (g.at < since || evenings.some((e) => e.gameId === g.gameId)) continue;
+      const detail = await tryGet(c, `/lol-match-history/v1/games/${g.gameId}`);
+      const recap = detail?.participants?.length ? gameRecap(detail, { puuid: me?.puuid }) : null;
+      if (recap) await addEvening(recap);
+    }
+    changed();
+  };
+
   const startRecapDemo = async () => {
     if (state.status === 'champ-select' || IN_GAME.includes(state.gameflow)) return { error: 'Une partie est en cours.' };
     const detail = JSON.parse(await readAsset('test/fixtures/game-detail-galio.json'));
@@ -600,6 +623,9 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       return schedule(); // client starting up
     }
     await refreshProfile(client);
+    const friendList = await tryGet(client, '/lol-chat/v1/friends');
+    if (Array.isArray(friendList)) friends = new Set(friendList.map((f) => f.puuid).filter(Boolean));
+    backfillEvening(client).catch(() => {});
     // Started (or restarted) after a game: its recap is still worth showing.
     const last = profile?.recent?.[0];
     if (!state.recap && last?.gameId && Date.now() - last.at < LAST_RECAP_MS) fetchRecap(client, last.gameId);

@@ -125,7 +125,7 @@ function renderGroupWaiting() {
   const hosts = [...new Map(people.map((p) => [p.msg.name, p.msg])).values()];
   return `${pcBanner()}${renderPeople()}<section class="wait"><div class="pulse ok"></div><h1>Groupe connecté</h1>
     <p>${hosts.map((m) => `${esc(m.name)} : ${status(m)}`).join('<br>')}</p>
-    <p>Les conseils apparaissent dès la sélection des champions, puis le build pendant la partie.</p></section>${renderRecap(state?.recap)}<p class="legal">${LEGAL}</p>`;
+    <p>Les conseils apparaissent dès la sélection des champions, puis le build pendant la partie.</p></section>${renderRecap(state?.recap)}${renderEvening(state?.evening?.games)}<p class="legal">${LEGAL}</p>`;
 }
 
 function renderWaiting() {
@@ -163,7 +163,7 @@ function renderWaiting() {
       <datalist id="champ-names">${names.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
     </section>`;
   const version = state?.version ? `<p class="note">Version ${esc(state.version)}${state.update?.status === 'ready' ? ` · la ${esc(state.update.version)} s'installera après ta partie` : ''}</p>` : '';
-  return `${updateBanner()}<section class="wait">${body}</section>${who}${renderRecap(state?.recap)}<div class="tiles">${renderProfile()}${learn}${qr}</div>${version}<p class="legal">${LEGAL}</p>`;
+  return `${updateBanner()}<section class="wait">${body}</section>${who}${renderRecap(state?.recap)}${renderEvening(state?.evening?.games)}<div class="tiles">${renderProfile()}${learn}${qr}</div>${version}<p class="legal">${LEGAL}</p>`;
 }
 
 // Your last games as a row of portraits, green for a win, red for a loss; today's count first.
@@ -554,6 +554,69 @@ function renderRecap(r) {
     </section>`;
 }
 
+// The evening: you and your friends, game after game. Several PCs may report the same game:
+// one line per player and per game.
+const EVENING = {
+  share: ['% dégâts', (s) => s.share, (v) => `${Math.round(v * 100)} %`],
+  damage: ['Dégâts', (s) => s.damage, (v) => gk(v)],
+  heal: ['Soins', (s) => s.heal, (v) => gk(v)],
+  taken: ['Encaissés', (s) => s.taken, (v) => gk(v)],
+  wins: ['Victoires', (s) => s.winrate, (v, s) => `${s.wins}/${s.games}`],
+};
+let eveningMetric = 'share';
+function eveningPlayers(games) {
+  const by = new Map();
+  for (const g of games) {
+    for (const p of g.players) {
+      const s = by.get(p.name) ?? { name: p.name, me: false, games: 0, wins: 0, damage: 0, share: 0, heal: 0, taken: 0, kills: 0, deaths: 0, assists: 0, champs: [] };
+      s.me ||= p.me;
+      s.games++;
+      s.wins += p.win ? 1 : 0;
+      for (const k of ['damage', 'share', 'heal', 'taken', 'kills', 'deaths', 'assists']) s[k] += p[k];
+      s.champs.push(p.championId);
+      by.set(p.name, s);
+    }
+  }
+  return [...by.values()].map((s) => ({ ...s, damage: s.damage / s.games, share: s.share / s.games, heal: s.heal / s.games, taken: s.taken / s.games, deathsAvg: s.deaths / s.games, winrate: s.wins / s.games }));
+}
+function eveningTitles(list) {
+  if (list.length < 2) return '';
+  const best = (f) => [...list].sort((a, b) => f(b) - f(a))[0];
+  const titles = [
+    ['Le carry', best((s) => s.share), (s) => `${Math.round(s.share * 100)} % des dégâts de son équipe`],
+    ['Le mur', best((s) => s.taken), (s) => `${gk(s.taken)} encaissés par partie`],
+    ['L’infirmier', best((s) => s.heal), (s) => `${gk(s.heal)} de soins par partie`],
+    ['Le kamikaze', best((s) => s.deathsAvg), (s) => `${s.deathsAvg.toFixed(1).replace('.', ',')} morts par partie`],
+  ];
+  return `<div class="titles">${titles.map(([t, s, why]) => `<div class="title-card"><span>${t}</span><b>${esc(s.name)}</b><small>${esc(why(s))}</small></div>`).join('')}</div>`;
+}
+function renderEvening(games) {
+  if (!games?.length) return '';
+  const list = eveningPlayers(games);
+  const [label, value, show] = EVENING[eveningMetric];
+  const max = Math.max(1e-9, ...list.map(value));
+  const order = [...list].sort((a, b) => value(b) - value(a));
+  const rank = new Map(order.map((s, i) => [s.name, i]));
+  const rows = list.map((s, i) => `<div class="bar-row ally ${s.me ? 'me' : ''}" id="ev-${i}" style="transform:translateY(${rank.get(s.name) * ROW}px);--d:${rank.get(s.name) * 60}ms">
+      ${img(s.champs.at(-1))}
+      <div class="bar"><i style="width:${((value(s) / max) * 100).toFixed(1)}%"></i><span class="bname">${esc(s.name)}<small>${s.games} partie${s.games > 1 ? 's' : ''}</small></span></div>
+      <b class="bval">${esc(show(value(s), s))}</b>
+    </div>`).join('');
+  const strip = [...games].sort((a, b) => b.at - a.at).map((g) => {
+    const win = (g.players.find((p) => p.me) ?? g.players[0])?.win;
+    return `<div class="ev-game ${win ? 'win' : 'loss'}" title="${new Date(g.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}">${g.players.map((p) => img(p.championId)).join('')}</div>`;
+  }).join('');
+  const wins = games.filter((g) => (g.players.find((p) => p.me) ?? g.players[0])?.win).length;
+  return `<div class="label"><span>Ce soir</span><b>${games.length} parties · ${wins} V – ${games.length - wins} D</b></div>
+    <section class="recap evening">
+      ${eveningTitles(list)}
+      <div class="metrics">${Object.entries(EVENING).map(([k, [name]]) => `<button data-evening="${k}" class="${k === eveningMetric ? 'on' : ''}">${name}</button>`).join('')}</div>
+      <div class="bars" style="height:${list.length * ROW}px">${rows}</div>
+      <div class="ev-strip">${strip}</div>
+      <p class="note">${label === '% dégâts' ? 'Part des dégâts de l’équipe' : label} : moyenne par partie, d'après le détail de partie du client. Tes amis LoL qui ont joué avec toi comptent, et ceux qui lancent l'appli sur leur PC ajoutent leurs propres parties.</p>
+    </section>`;
+}
+
 // The public page without a group link: what it is, and the download for Windows.
 function renderLanding() {
   const pc = `<section class="tile"><div class="tile-title">Sur ton PC Windows</div>
@@ -786,6 +849,12 @@ function render() {
 }
 
 app.addEventListener('click', (e) => {
+  const pickEvening = e.target.closest('[data-evening]');
+  if (pickEvening) {
+    eveningMetric = pickEvening.dataset.evening;
+    render();
+    return;
+  }
   const pickMetric = e.target.closest('[data-metric]');
   if (pickMetric) {
     metric = pickMetric.dataset.metric;
@@ -877,7 +946,7 @@ function onState(next) {
     deadline = null;
   }
   if (!d) opened.clear();
-  const key = JSON.stringify([state.following, state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name), state.settings, state.game, state.recap, state.profileSummary, phone?.group, state.group, state.plan, state.update]);
+  const key = JSON.stringify([state.following, state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name), state.settings, state.game, state.recap, state.evening, state.profileSummary, phone?.group, state.group, state.plan, state.update]);
   if (key !== lastKey) {
     lastKey = key;
     render();
@@ -901,6 +970,16 @@ const players = new Map();
 
 // Who can be followed: each companion's own player, plus the allies it computes advice for
 // (a friend running their own companion is preferred over a view computed by someone else).
+function mergeEvenings(lists) {
+  const games = new Map();
+  for (const g of lists.flat()) {
+    const known = games.get(g.gameId);
+    if (!known) games.set(g.gameId, { ...g, players: [...g.players] });
+    else for (const p of g.players) if (!known.players.some((q) => q.name === p.name)) known.players.push({ ...p, me: false });
+  }
+  return [...games.values()];
+}
+
 function showRemote() {
   const now = Date.now();
   const entries = new Map();
@@ -929,6 +1008,7 @@ function showRemote() {
     game: view.self ? msg.game ?? null : null,
     plan: view.self ? msg.plan ?? null : null,
     recap: msg.recap ?? null,
+    evening: { games: mergeEvenings([...players.values()].map((m) => m.evening?.games ?? [])) },
     champions: msg.champions,
     assets: msg.assets,
     demo: msg.demo,
