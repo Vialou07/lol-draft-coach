@@ -9,6 +9,8 @@ import { recommend } from './recommend.mjs';
 import { loadDraftStats } from './stats-draft.mjs';
 import { loadMayhemStats } from './stats-aram.mjs';
 import { loadChampionInfo } from './static-data.mjs';
+import { loadGroup, groupLink, playerIdFor, startRelay } from './relay.mjs';
+import { assignBench } from './team.mjs';
 
 const RETRY_MS = 3000;
 // Demos replay real recorded champ selects (anonymised fixtures) so the page can be seen
@@ -47,6 +49,7 @@ function keyMoment(prev, d) {
   return null;
 }
 const DDRAGON_FALLBACK = '16.21.1';
+const ROLE_LABELS = { top: 'top', jungle: 'jungle', middle: 'mid', bottom: 'ADC', utility: 'support' };
 
 async function latestDdragon() {
   try {
@@ -63,7 +66,7 @@ const defaultStats = async ({ onLog, info }) => {
   return { draft, mayhem };
 };
 
-export async function startCompanion({ port = 4317, host, lockfile, onLog = () => {}, loadStats = defaultStats, loadInfo = loadChampionInfo } = {}) {
+export async function startCompanion({ port = 4317, host, lockfile, onLog = () => {}, loadStats = defaultStats, loadInfo = loadChampionInfo, share = true } = {}) {
   const state = {
     status: 'no-client',
     gameflow: 'None',
@@ -95,6 +98,15 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   let lastDraftKey = '';
 
   let demo = null;
+  let rawSession = null; // last champ select payload, to compute each ally's own advice
+  let aramViews = null; // ARAM: the whole team's views, with the shared bench split between players
+  const friendProfiles = new Map();
+
+  // Group sharing: friends follow their own draft on their phone through the group link.
+  const group = share ? await loadGroup().catch(() => null) : null;
+  const relay = group ? await startRelay({ group, onLog }).catch(() => null) : null;
+  if (group) state.group = { link: groupLink(group) };
+
   const server = await startServer({
     port,
     host,
@@ -110,9 +122,55 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       },
     },
   });
+  // Advice from each ally's seat, computed from the same champ select (they see it too).
+  const allyViews = () => {
+    if (!rawSession || !state.draft) return [];
+    const gameMode = state.queue?.gameMode;
+    return (rawSession.myTeam ?? [])
+      .filter((p) => p.cellId !== rawSession.localPlayerCellId)
+      .map((p) => {
+        const draft = draftState({ ...rawSession, localPlayerCellId: p.cellId }, { gameMode });
+        const visible = p.nameVisibilityType !== 'HIDDEN' && p.gameName;
+        const known = visible && p.puuid ? friendProfiles.get(p.puuid) : null;
+        let advice = null;
+        try {
+          advice = recommend(draft, { stats, profile: known ?? { unknown: true }, champions: state.champions, info });
+        } catch {
+          // one ally's view must not break the others
+        }
+        const name = visible ? p.gameName : p.anonName ?? `Allié ${ROLE_LABELS[p.assignedPosition] ?? ''}`.trim();
+        return { cellId: p.cellId, name, self: false, draft, advice };
+      });
+  };
+
+  // What the group's phones receive: no lockfile, no token, only champions, drafts and advice.
+  const groupMessage = () => {
+    const views = state.status !== 'champ-select' || !state.draft
+      ? []
+      : aramViews ?? [{ cellId: state.draft.allies.find((p) => p.me)?.cellId, name: state.summoner?.gameName ?? 'Moi', self: true, draft: state.draft, advice: state.advice }, ...allyViews()];
+    const ids = new Set();
+    JSON.stringify(views, (k, v) => {
+      if (/^(championId|hoverId|opponentId|vsId)$/.test(k) && v > 0) ids.add(String(v));
+      if (k === 'bench' || k === 'ally' || k === 'enemy') v?.forEach?.((id) => ids.add(String(id)));
+      return v;
+    });
+    return {
+      v: 1,
+      name: state.summoner?.gameName ?? 'PC de l’hôte',
+      status: state.status,
+      gameflow: state.gameflow,
+      queue: state.queue,
+      demo: state.demo ? { name: state.demo.name, caption: state.demo.caption } : null,
+      assets: state.assets,
+      champions: Object.fromEntries([...ids].filter((id) => state.champions[id]).map((id) => [id, state.champions[id]])),
+      views,
+    };
+  };
+
   const changed = () => {
     state.updatedAt = Date.now();
     server.broadcast();
+    if (relay) relay.publish(playerIdFor(state.summoner ? `${state.summoner.gameName}#${state.summoner.tagLine}` : `host-${group.id}`), groupMessage);
   };
 
   const advise = () => {
@@ -120,6 +178,12 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     try {
       const who = demo ? profile ?? SAMPLE_PROFILE : profile;
       state.advice = recommend(state.draft, { stats, profile: who, champions: state.champions, pickable, owned, info });
+      aramViews = null;
+      if (state.draft.kind === 'aram' && rawSession) {
+        const own = { cellId: state.draft.allies.find((p) => p.me)?.cellId, name: state.summoner?.gameName ?? 'Moi', self: true, draft: state.draft, advice: state.advice };
+        aramViews = assignBench([own, ...allyViews()]);
+        state.advice = aramViews[0].advice;
+      }
     } catch (e) {
       onLog(`Erreur de calcul : ${e.message}`);
       state.advice = { options: [], note: 'Conseil indisponible pour ce moment de la draft.' };
@@ -155,6 +219,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
         prev = e.t;
         if (run.cancelled) return;
         const prevDraft = state.draft;
+        rawSession = e.session;
         state.draft = draftState(e.session, { gameMode: spec.queue.gameMode });
         if (state.draft.timeLeftMs != null) state.draft.timeLeftMs /= DEMO_SPEED;
         if (state.draft.phaseTotalMs != null) state.draft.phaseTotalMs /= DEMO_SPEED;
@@ -180,6 +245,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   const onSession = (session) => {
     if (demo) stopDemo(); // a real champ select always wins over a demo
     const fresh = state.status !== 'champ-select';
+    rawSession = session;
     state.draft = draftState(session, { gameMode: state.queue?.gameMode });
     const key = draftKey(state.draft);
     if (key === lastDraftKey) return changed(); // timer only
@@ -187,6 +253,18 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     state.status = 'champ-select';
     if (fresh) {
       pickable = null;
+      // Friends visible in the lobby: read their profile as the client shows it, once.
+      for (const p of session.myTeam ?? []) {
+        if (p.cellId === session.localPlayerCellId || p.nameVisibilityType === 'HIDDEN' || !p.puuid || friendProfiles.has(p.puuid)) continue;
+        friendProfiles.set(p.puuid, null);
+        buildProfile(client, { puuid: p.puuid, maxGames: 60 })
+          .then((prof) => {
+            friendProfiles.set(p.puuid, prof);
+            onLog(`Profil de ${p.gameName} : ${prof.gamesRead} parties lues`);
+            changed();
+          })
+          .catch(() => friendProfiles.delete(p.puuid));
+      }
       const me = state.draft.allies.find((p) => p.me);
       onLog(`Sélection : file ${state.draft.queueId} (${state.queue?.gameMode ?? '?'}), mode ${state.draft.kind}, rôle ${me?.role || '-'}`);
       tryGet(client, '/lol-champ-select/v1/pickable-champion-ids').then((ids) => {
@@ -326,6 +404,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       stopped = true;
       clearTimeout(retry);
       ws?.terminate();
+      await relay?.stop();
       await server.close();
     },
   };

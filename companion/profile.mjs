@@ -5,10 +5,10 @@ import { tryGet } from './lcu.mjs';
 const PAGE = 20;
 const MAX_GAMES = 200;
 
-async function recentGames(client) {
+async function recentGames(client, who, max) {
   const games = [];
-  for (let beg = 0; beg < MAX_GAMES; beg += PAGE) {
-    const page = await tryGet(client, `/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=${beg}&endIndex=${beg + PAGE}`);
+  for (let beg = 0; beg < max; beg += PAGE) {
+    const page = await tryGet(client, `/lol-match-history/v1/products/lol/${who}/matches?begIndex=${beg}&endIndex=${beg + PAGE}`);
     const list = page?.games?.games ?? [];
     games.push(...list);
     if (list.length < PAGE) break;
@@ -16,11 +16,13 @@ async function recentGames(client) {
   return games;
 }
 
-export async function buildProfile(client) {
+// Without a puuid: the logged-in player. With one: another player, as their profile page in
+// the client shows it (used for friends in the same lobby, never for hidden ranked players).
+export async function buildProfile(client, { puuid, maxGames = MAX_GAMES } = {}) {
   const [mastery, games, ranked] = await Promise.all([
-    tryGet(client, '/lol-champion-mastery/v1/local-player/champion-mastery'),
-    recentGames(client),
-    tryGet(client, '/lol-ranked/v1/current-ranked-stats'),
+    tryGet(client, puuid ? `/lol-champion-mastery/v1/${puuid}/champion-mastery` : '/lol-champion-mastery/v1/local-player/champion-mastery'),
+    recentGames(client, puuid ?? 'current-summoner', maxGames),
+    tryGet(client, puuid ? `/lol-ranked/v1/ranked-stats/${puuid}` : '/lol-ranked/v1/current-ranked-stats'),
   ]);
   const champions = {};
   const entry = (id) => (champions[id] ??= { mastery: 0, level: 0, games: 0, wins: 0, byQueue: {} });

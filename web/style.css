@@ -186,3 +186,8 @@ button:hover { border-color: var(--gold); }
 .tcell small { font-size: 11px; color: var(--faint); }
 .overall { font-family: var(--disp); font-weight: 800; font-size: 26px; }
 .analysis .warn { padding: 0 0 10px; }
+
+/* Group mode: whose draft this phone follows */
+.people { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; }
+.people button { flex: none; padding: 7px 12px; font-size: 13px; border-radius: 999px; }
+.people button.on { background: var(--gold-soft); border-color: var(--gold); color: var(--gold); }

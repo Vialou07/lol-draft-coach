@@ -40,8 +40,9 @@ export function startServer({ port, host = '0.0.0.0', snapshot, icon = async () 
     }
     if (path === '/phone') {
       const url = lanUrls(boundPort)[0] ?? null;
+      const group = snapshot().group?.link ?? null;
       res.writeHead(200, { 'Content-Type': TYPES['.json'], 'Cache-Control': 'no-store' });
-      return res.end(JSON.stringify({ url, qr: url ? qrSvg(url) : null }));
+      return res.end(JSON.stringify({ url, qr: url ? qrSvg(url) : null, group, groupQr: group ? qrSvg(group) : null }));
     }
     if (req.method === 'POST' && actions[path]) {
       const result = await Promise.resolve(actions[path]()).catch((e) => ({ error: e.message }));

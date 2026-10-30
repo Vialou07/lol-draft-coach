@@ -168,3 +168,17 @@ test('draft analysis: lane opponent, both teams and game length are read around 
   assert.equal(an.timing.length, 3);
   assert.ok(an.overall.low <= an.overall.p && an.overall.p <= an.overall.high);
 });
+
+test('ARAM team: the shared bench is split, never the same champion for two players', async () => {
+  const { assignBench } = await import('../companion/team.mjs');
+  for (const f of readdirSync(dir).filter((f) => f.startsWith('q2400')).slice(0, 25)) {
+    const g = read(`./fixtures/real/${f}`);
+    const session = g.events.find((e) => e.session.timer.phase === 'FINALIZATION')?.session ?? g.events.at(-1).session;
+    const views = session.myTeam.map((p) => {
+      const draft = draftState({ ...session, localPlayerCellId: p.cellId });
+      return { name: p.anonName, draft, advice: recommend(draft, { stats, profile: { unknown: true }, champions, info }) };
+    });
+    const assigned = assignBench(views).map((v) => v.advice?.assigned).filter(Boolean);
+    assert.equal(new Set(assigned).size, assigned.length, `${f}: a bench champion given twice`);
+  }
+});

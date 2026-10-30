@@ -291,7 +291,7 @@ function option(s, reference) {
     detail: reasons(s, null, 6, 0.5),
     vsId: reference && reference !== s ? Number(reference.key) : null,
     games: s.mastery.games,
-    tag: s.mastery.experience < 1 ? 'Nouveau' : s.mastery.games ? `${s.mastery.games} parties` : 'Ton pool',
+    tag: s.mastery.unknown ? '' : s.mastery.experience < 1 ? 'Nouveau' : s.mastery.games ? `${s.mastery.games} parties` : 'Ton pool',
     warn,
     close: Boolean(s.close),
   };

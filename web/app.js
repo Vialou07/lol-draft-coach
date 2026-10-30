@@ -1,4 +1,6 @@
-// Live page: receives the companion's state over a websocket and renders one screen per moment.
+// Live page: renders one screen per moment of champ select. On the PC it follows the local
+// companion over a websocket; opened from the group link (#g=…&k=…) it follows the group
+// through the encrypted relay, and each friend picks whose draft to show.
 
 const app = document.getElementById('app');
 const linkLost = document.getElementById('link');
@@ -14,6 +16,15 @@ const DDRAGON = '16.21.1';
 const SCALE = [0.42, 0.62]; // every gauge shares one scale, so gaps between cards are visible
 const LEGAL = 'LoL Draft Coach isn’t endorsed by Riot Games and doesn’t reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.';
 const onPc = ['localhost', '127.0.0.1'].includes(location.hostname);
+const hash = new URLSearchParams(location.hash.slice(1));
+const remote = hash.get('g') && hash.get('k') ? { group: hash.get('g'), key: hash.get('k') } : null;
+const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+const MQTT_LIB = 'https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js';
+const STALE_MS = 45000;
+const storage = {
+  get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+};
 
 let state = null;
 let lastKey = '';
@@ -25,15 +36,20 @@ const opened = new Set();
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const champ = (id) => state?.champions?.[id];
 const champName = (id) => champ(id)?.name ?? `#${id}`;
-const img = (id, cls = '') =>
-  id > 0 ? `<img class="${cls}" src="/icon/${id}" alt="${esc(champName(id))}" data-alias="${esc(champ(id)?.alias ?? '')}">` : '';
+const ddragonIcon = (alias) => `https://ddragon.leagueoflegends.com/cdn/${state?.assets?.ddragon ?? DDRAGON}/img/champion/${alias}.png`;
+const img = (id, cls = '') => {
+  if (!(id > 0)) return '';
+  const alias = champ(id)?.alias ?? '';
+  const src = remote && alias ? ddragonIcon(alias) : `/icon/${id}`;
+  return `<img class="${cls}" src="${src}" alt="${esc(champName(id))}" data-alias="${esc(alias)}">`;
+};
 
 // The companion proxies icons from the client; outside a game, fall back to Data Dragon.
 document.addEventListener('error', (e) => {
   const el = e.target;
   if (el.tagName !== 'IMG' || !el.dataset.alias || el.dataset.fallback) return;
   el.dataset.fallback = '1';
-  el.src = `https://ddragon.leagueoflegends.com/cdn/${state?.assets?.ddragon ?? DDRAGON}/img/champion/${el.dataset.alias}.png`;
+  el.src = ddragonIcon(el.dataset.alias);
 }, true);
 
 const pts = (x, digits = 1) => {
@@ -54,7 +70,25 @@ function headline(d, a, me) {
   return { text: d.acting === 'enemy' ? 'Les adversaires choisissent' : 'Prépare ton pick', mine: false };
 }
 
+function renderPeople() {
+  if (!remote || people.length < 2) return '';
+  return `<nav class="people">${people.map((p) => `<button data-me="${esc(p.name)}" class="${p.name === state?.summoner?.gameName ? 'on' : ''}">${esc(p.name)}</button>`).join('')}</nav>`;
+}
+
+function renderGroupWaiting() {
+  if (!people.length) {
+    return `<section class="wait"><div class="pulse"></div><h1>En attente du groupe</h1>
+      <p>Dès qu'un membre lance le compagnon sur son PC, sa draft apparaît ici toute seule.</p></section><p class="legal">${LEGAL}</p>`;
+  }
+  const status = (m) => (m.status === 'no-client' ? 'client LoL fermé' : ({ Lobby: 'dans le salon', Matchmaking: 'en recherche de partie', ReadyCheck: 'partie trouvée', InProgress: 'en partie', ChampSelect: 'en sélection' }[m.gameflow] ?? 'connecté'));
+  const hosts = [...new Map(people.map((p) => [p.msg.name, p.msg])).values()];
+  return `${renderPeople()}<section class="wait"><div class="pulse ok"></div><h1>Groupe connecté</h1>
+    <p>${hosts.map((m) => `${esc(m.name)} : ${status(m)}`).join('<br>')}</p>
+    <p>Les conseils apparaissent dès la sélection des champions.</p></section><p class="legal">${LEGAL}</p>`;
+}
+
 function renderWaiting() {
+  if (remote) return renderGroupWaiting();
   const who = state?.summoner ? `<div class="who">Compte <b>${esc(state.summoner.gameName)}</b></div>` : '';
   let body;
   if (!state || state.status === 'no-client') {
@@ -70,12 +104,18 @@ function renderWaiting() {
       <p>Rejoue une de tes vraies sélections, pour voir l'écran avant une partie.</p>
       <div class="buttons"><button data-demo="ranked">Ranked solo</button><button data-demo="aram">ARAM du Chaos</button></div>
     </section>`;
-  const qr = onPc && phone?.qr
-    ? `<section class="tile phone"><div class="qr">${phone.qr}</div><div>
-        <div class="tile-title">Sur ton téléphone</div>
-        <p>Scanne ce code avec l'appareil photo, sur le même Wi-Fi. Ensuite « Ajouter à l'écran d'accueil » et c'est réglé.</p>
-        <p class="url">${esc(phone.url)}</p></div></section>`
-    : '';
+  const qr = onPc && phone?.groupQr
+    ? `<section class="tile phone"><div class="qr">${phone.groupQr}</div><div>
+        <div class="tile-title">Le lien du groupe</div>
+        <p>Scanne-le avec ton téléphone, et envoie-le à tes potes : quand vous jouez ensemble, chacun voit sa propre draft. Rien à installer.</p>
+        <div class="buttons"><button data-copy="${esc(phone.group)}">Copier le lien</button></div>
+        ${phone.url ? `<p class="url">Même Wi-Fi, sans internet : ${esc(phone.url)}</p>` : ''}</div></section>`
+    : onPc && phone?.qr
+      ? `<section class="tile phone"><div class="qr">${phone.qr}</div><div>
+          <div class="tile-title">Sur ton téléphone</div>
+          <p>Scanne ce code avec l'appareil photo, sur le même Wi-Fi.</p>
+          <p class="url">${esc(phone.url)}</p></div></section>`
+      : '';
   return `<section class="wait">${body}</section>${who}${demo}${qr}<p class="legal">${LEGAL}</p>`;
 }
 
@@ -232,6 +272,10 @@ function renderAdvice(d, a) {
 }
 
 function render() {
+  if (remote && !state) {
+    app.innerHTML = renderGroupWaiting();
+    return;
+  }
   if (state?.status !== 'champ-select' || !state.draft) {
     app.innerHTML = renderWaiting();
     return;
@@ -245,10 +289,12 @@ function render() {
   const who = state.demo?.profile === 'real' ? 'ton profil' : 'un profil d’exemple (ouvre le client LoL pour le tien)';
   const demo = !state.demo
     ? ''
-    : state.demo.caption
-      ? `<div class="demo-bar step"><span>${esc(state.demo.caption)}</span><button data-demo="next">Continuer</button></div>`
-      : `<div class="demo-bar"><span>Démo d’une de tes vraies sélections, avec ${who}</span><button data-demo="stop">Arrêter</button></div>`;
-  app.innerHTML = `${demo}
+    : remote
+      ? `<div class="demo-bar${state.demo.caption ? ' step' : ''}"><span>${esc(state.demo.caption ?? 'Démo lancée depuis le PC de l’hôte')}</span></div>`
+      : state.demo.caption
+        ? `<div class="demo-bar step"><span>${esc(state.demo.caption)}</span><button data-demo="next">Continuer</button></div>`
+        : `<div class="demo-bar"><span>Démo d’une de tes vraies sélections, avec ${who}</span><button data-demo="stop">Arrêter</button></div>`;
+  app.innerHTML = `${renderPeople()}${demo}
     <header class="head">
       <div><h1 class="${h.mine ? 'mine' : ''} ${h.text.length > 14 ? 'long' : ''}">${esc(h.text)}</h1><div class="sub"><i class="dot"></i>${esc(sub)}</div></div>
       <div class="ring" id="ring"><svg viewBox="0 0 58 58"><circle class="track" cx="29" cy="29" r="25"/><circle class="left" cx="29" cy="29" r="25" stroke-dasharray="157.1" stroke-dashoffset="0"/></svg><span></span></div>
@@ -263,6 +309,17 @@ app.addEventListener('click', (e) => {
   const button = e.target.closest('[data-demo]');
   if (button) {
     fetch(`/demo/${button.dataset.demo}`, { method: 'POST' });
+    return;
+  }
+  const person = e.target.closest('[data-me]');
+  if (person) {
+    storage.set('ldc-me', person.dataset.me);
+    showRemote();
+    return;
+  }
+  const copy = e.target.closest('[data-copy]');
+  if (copy) {
+    navigator.clipboard?.writeText(copy.dataset.copy).then(() => (copy.textContent = 'Lien copié'));
     return;
   }
   // A tap shows the details of a card; it stays open across live updates.
@@ -301,7 +358,7 @@ function onState(next) {
     deadline = null;
   }
   if (!d) opened.clear();
-  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url]);
+  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name)]);
   if (key !== lastKey) {
     lastKey = key;
     render();
@@ -318,7 +375,91 @@ function connect() {
   };
 }
 
-if (onPc) {
+// --- Group mode: every companion of the group publishes its drafts to the relay ---
+
+let people = [];
+const players = new Map();
+
+// Who can be followed: each companion's own player, plus the allies it computes advice for
+// (a friend running their own companion is preferred over a view computed by someone else).
+function showRemote() {
+  const now = Date.now();
+  const entries = new Map();
+  for (const msg of players.values()) {
+    if (now - (msg.sentAt ?? 0) > STALE_MS) continue;
+    const views = msg.views?.length ? msg.views : [{ name: msg.name, self: true, draft: null, advice: null }];
+    for (const view of views) {
+      const name = view.self ? msg.name : view.name;
+      const current = entries.get(name);
+      if (!current || (view.self && !current.view.self)) entries.set(name, { name, msg, view });
+    }
+  }
+  people = [...entries.values()].sort((a, b) => Number(b.view.self) - Number(a.view.self));
+  if (!people.length) return onState({ status: 'group-empty', remote: true });
+  const wanted = storage.get('ldc-me');
+  const pick = people.find((p) => p.name === wanted) ?? people[0];
+  const { msg, view } = pick;
+  onState({
+    status: view.draft ? 'champ-select' : msg.status,
+    gameflow: msg.gameflow,
+    summoner: { gameName: pick.name },
+    queue: msg.queue,
+    draft: view.draft,
+    advice: view.advice,
+    champions: msg.champions,
+    assets: msg.assets,
+    demo: msg.demo,
+    remote: true,
+  });
+}
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.append(s);
+  });
+}
+
+async function connectRemote() {
+  const { importKey, decode } = await import('./codec.js');
+  const key = await importKey(remote.key);
+  await loadScript(MQTT_LIB);
+  let attempt = 0;
+  const start = () => {
+    const client = window.mqtt.connect(BROKERS[attempt % BROKERS.length], { reconnectPeriod: 0, connectTimeout: 8000 });
+    client.on('connect', () => {
+      linkLost.hidden = true;
+      client.subscribe(`ldc1/${remote.group}/p/+`);
+    });
+    client.on('message', async (topic, payload) => {
+      const id = topic.split('/').pop();
+      if (!payload.length) players.delete(id);
+      else {
+        try {
+          players.set(id, await decode(new Uint8Array(payload), key));
+        } catch {
+          return; // not for this group key
+        }
+      }
+      showRemote();
+    });
+    const retry = () => {
+      linkLost.hidden = false;
+      client.end(true);
+      attempt++;
+      setTimeout(start, 2000);
+    };
+    client.on('close', retry);
+    client.on('error', () => {});
+  };
+  start();
+  setInterval(showRemote, 5000); // drop companions that went quiet
+}
+
+if (onPc && !remote) {
   fetch('/phone')
     .then((r) => r.json())
     .then((p) => {
@@ -328,4 +469,5 @@ if (onPc) {
     .catch(() => {});
 }
 render();
-connect();
+if (remote) connectRemote().catch(() => (linkLost.hidden = false));
+else connect();

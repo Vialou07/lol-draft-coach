@@ -106,6 +106,7 @@ export function createDraftModel(stats, { difficulty = {}, info = {} } = {}) {
   }
 
   function mastery(key, profile) {
+    if (profile?.unknown) return { value: 0, variance: 0, experience: 10, games: 0, wins: 0, unknown: true };
     const p = profile?.champions?.[key];
     let games = 0;
     let wins = 0;
