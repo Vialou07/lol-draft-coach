@@ -1,6 +1,6 @@
 // The companion: follows the League client, decodes champ select and serves the live page.
 
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { findClient, get, getBinary, tryGet, subscribe, TOPICS } from './lcu.mjs';
 import { draftState, draftKey } from './draft.mjs';
 import { startServer } from './server.mjs';
@@ -13,6 +13,7 @@ import { loadGroup, groupLink, playerIdFor, startRelay } from './relay.mjs';
 import { assignBench } from './team.mjs';
 
 const RETRY_MS = 3000;
+const SETTINGS = new URL('../data/local/settings.json', import.meta.url);
 // Demos replay real recorded champ selects (anonymised fixtures) so the page can be seen
 // without starting a game.
 const DEMOS = {
@@ -76,6 +77,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     advice: null,
     champions: {},
     assets: { ddragon: await latestDdragon() },
+    settings: await readFile(SETTINGS, 'utf8').then(JSON.parse).catch(() => ({ learning: [] })),
     updatedAt: 0,
   };
   let client = null;
@@ -116,6 +118,15 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       '/demo/ranked': () => startDemo('ranked'),
       '/demo/aram': () => startDemo('aram'),
       '/demo/stop': () => stopDemo(),
+      '/settings': async (input) => {
+        const learning = Array.isArray(input?.learning) ? [...new Set(input.learning.map(Number).filter((id) => id > 0))].slice(0, 12) : state.settings.learning;
+        state.settings = { ...state.settings, learning };
+        await mkdir(new URL('./', SETTINGS), { recursive: true });
+        await writeFile(SETTINGS, JSON.stringify(state.settings, null, 2));
+        advise();
+        changed();
+        return state.settings;
+      },
       '/demo/next': () => {
         demo?.resume?.();
         return {};
@@ -177,7 +188,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     if (!state.draft) return;
     try {
       const who = demo ? profile ?? SAMPLE_PROFILE : profile;
-      state.advice = recommend(state.draft, { stats, profile: who, champions: state.champions, pickable, owned, info });
+      state.advice = recommend(state.draft, { stats, profile: who, champions: state.champions, pickable, owned, info, learning: state.settings.learning });
       aramViews = null;
       if (state.draft.kind === 'aram' && rawSession) {
         const own = { cellId: state.draft.allies.find((p) => p.me)?.cellId, name: state.summoner?.gameName ?? 'Moi', self: true, draft: state.draft, advice: state.advice };

@@ -191,3 +191,15 @@ button:hover { border-color: var(--gold); }
 .people { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; }
 .people button { flex: none; padding: 7px 12px; font-size: 13px; border-radius: 999px; }
 .people button.on { background: var(--gold-soft); border-color: var(--gold); color: var(--gold); }
+
+/* Traps and champions to learn */
+.trap { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.arow:has(.trap) { grid-template-columns: minmax(110px, auto) 1fr; }
+.pill.amber { background: var(--gold-soft); color: var(--gold); }
+.label b.danger { color: var(--neg); }
+.chips.wrap { flex-wrap: wrap; }
+.chip-btn { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 4px; font-size: 13px; border-radius: 999px; }
+.chip-btn b { color: var(--faint); font-weight: 700; }
+.add { display: flex; gap: 8px; }
+.add input { flex: 1; min-width: 0; font: 500 14px var(--body); color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.add input:focus { outline: none; border-color: var(--gold); }

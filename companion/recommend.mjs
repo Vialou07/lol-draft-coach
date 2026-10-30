@@ -7,7 +7,7 @@ import { recommendAram } from './recommend-aram.mjs';
 const MAYHEM_QUEUES = new Set([2400, 2401, 2403, 2405]);
 let draftCache = { stats: null, model: null };
 
-export function recommend(draft, { stats = {}, profile, champions = {}, pickable, owned, info = {} }) {
+export function recommend(draft, { stats = {}, profile, champions = {}, pickable, owned, info = {}, learning = [] }) {
   if (!draft) return null;
   const names = Object.fromEntries(Object.entries(champions).map(([id, c]) => [id, c.name]));
   if (draft.kind === 'draft' || draft.kind === 'blind') {
@@ -16,7 +16,7 @@ export function recommend(draft, { stats = {}, profile, champions = {}, pickable
       const difficulty = Object.fromEntries(Object.entries(info).map(([k, v]) => [k, v.difficulty]));
       draftCache = { stats: stats.draft, model: createDraftModel(stats.draft, { difficulty, info }) };
     }
-    return recommendDraft(draft, { stats: stats.draft, model: draftCache.model, profile, pickable, names });
+    return recommendDraft(draft, { stats: stats.draft, model: draftCache.model, profile, pickable, names, learning });
   }
   if (draft.kind === 'aram') {
     const modeStats = MAYHEM_QUEUES.has(draft.queueId) ? stats.mayhem : null;

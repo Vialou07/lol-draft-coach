@@ -116,7 +116,16 @@ function renderWaiting() {
           <p>Scanne ce code avec l'appareil photo, sur le même Wi-Fi.</p>
           <p class="url">${esc(phone.url)}</p></div></section>`
       : '';
-  return `<section class="wait">${body}</section>${who}${demo}${qr}<p class="legal">${LEGAL}</p>`;
+  const learning = state?.settings?.learning ?? [];
+  const names = Object.values(state?.champions ?? {}).map((c) => c.name).sort((a, b) => a.localeCompare(b, 'fr'));
+  const learn = `<section class="tile">
+      <div class="tile-title">Champions à apprendre</div>
+      <p>À chaque draft, l'appli te dira si c'est le bon moment pour en tester un, ou si ce serait du troll.</p>
+      <div class="chips wrap">${learning.map((id) => `<button class="chip-btn" data-unlearn="${id}">${mini(id)}${esc(champName(id))}<b>×</b></button>`).join('') || '<span class="muted small">Aucun pour l’instant</span>'}</div>
+      <form class="add" data-learn-form><input list="champ-names" name="champ" placeholder="Ajouter un champion" autocomplete="off"><button>Ajouter</button></form>
+      <datalist id="champ-names">${names.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+    </section>`;
+  return `<section class="wait">${body}</section>${who}${demo}${learn}${qr}<p class="legal">${LEGAL}</p>`;
 }
 
 function pic(id, { hover = false, me = false, empty = false } = {}) {
@@ -245,6 +254,24 @@ function renderAnalysis(an) {
     <section class="analysis">${rows.join('')}${warnings}</section>`;
 }
 
+function renderAvoid(a) {
+  if (!a.avoid?.length) return '';
+  const rows = a.avoid.map((t) => `<div class="arow"><span class="trap">${mini(t.championId)}<span class="aname">${esc(champName(t.championId))}</span></span>
+      <div class="abody"><span class="pill down">${esc(t.reason)} ${pts(t.delta)}</span>${t.warn ? `<span class="muted small">${esc(t.warn)}</span>` : ''}</div></div>`).join('');
+  return `<div class="label"><span>À éviter ici</span><b>pièges de cette draft</b></div><section class="analysis">${rows}</section>`;
+}
+
+const LEARN = { go: ['up', 'Bon moment'], maybe: ['amber', 'Jouable'], no: ['down', 'Pas ce soir'], offrole: ['flat', 'Autre poste'] };
+function renderLearn(a) {
+  if (!a.learn?.length) return '';
+  const rows = a.learn.map((l) => {
+    const [cls, word] = LEARN[l.verdict] ?? LEARN.offrole;
+    return `<div class="arow"><span class="trap">${mini(l.championId)}<span class="aname">${esc(champName(l.championId))}</span></span>
+      <div class="abody"><span class="pill ${cls}">${word}</span><span class="muted small">${esc(l.text)}</span></div></div>`;
+  }).join('');
+  return `<div class="label"><span>Tes champions à apprendre</span></div><section class="analysis">${rows}</section>`;
+}
+
 function renderAdvice(d, a) {
   if (!a) return '';
   if (!a.options?.length) return a.note ? `<p class="note">${esc(a.note)}</p>` : '';
@@ -264,11 +291,11 @@ function renderAdvice(d, a) {
   // Your hover is shown apart only when it is not already one of the cards.
   const hoverShown = a.hover && a.options.some((o) => o.championId === a.hover.championId);
   const refCard = a.hover && !hoverShown
-    ? `<div class="label"><span>Ton survol dans le client</span></div>${card(a.hover, { ref: true })}`
+    ? `<div class="label"><span>Ton survol dans le client</span>${a.hover.trap ? '<b class="danger">mauvais choix ici</b>' : ''}</div>${card(a.hover, { ref: true })}`
     : a.current
       ? `<div class="label"><span>Ton champion</span></div>${card(a.current, { ref: true, flat })}`
       : '';
-  return `<div class="label"><span>${title}</span><b>${esc(right)}</b></div>${cards}${legend}${refCard}${renderAnalysis(a.analysis)}${a.note ? `<p class="note">${esc(a.note)}</p>` : ''}`;
+  return `<div class="label"><span>${title}</span><b>${esc(right)}</b></div>${cards}${legend}${refCard}${renderAvoid(a)}${renderLearn(a)}${renderAnalysis(a.analysis)}${a.note ? `<p class="note">${esc(a.note)}</p>` : ''}`;
 }
 
 function render() {
@@ -317,6 +344,11 @@ app.addEventListener('click', (e) => {
     showRemote();
     return;
   }
+  const unlearn = e.target.closest('[data-unlearn]');
+  if (unlearn) {
+    saveLearning((state.settings?.learning ?? []).filter((id) => id !== Number(unlearn.dataset.unlearn)));
+    return;
+  }
   const copy = e.target.closest('[data-copy]');
   if (copy) {
     navigator.clipboard?.writeText(copy.dataset.copy).then(() => (copy.textContent = 'Lien copié'));
@@ -329,6 +361,20 @@ app.addEventListener('click', (e) => {
   if (opened.has(id)) opened.delete(id);
   else opened.add(id);
   el.classList.toggle('open');
+});
+
+function saveLearning(learning) {
+  fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ learning }) });
+}
+
+app.addEventListener('submit', (e) => {
+  const form = e.target.closest('[data-learn-form]');
+  if (!form) return;
+  e.preventDefault();
+  const name = form.champ.value.trim().toLowerCase();
+  const id = Object.entries(state?.champions ?? {}).find(([, c]) => c.name.toLowerCase() === name)?.[0];
+  if (id) saveLearning([...(state.settings?.learning ?? []), Number(id)]);
+  form.reset();
 });
 
 function tick() {
@@ -358,7 +404,7 @@ function onState(next) {
     deadline = null;
   }
   if (!d) opened.clear();
-  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name)]);
+  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name), state.settings]);
   if (key !== lastKey) {
     lastKey = key;
     render();

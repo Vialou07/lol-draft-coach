@@ -12,7 +12,7 @@ const GROUPS = ['Courte', 'Moyenne', 'Longue'];
 
 const phi = (z) => 0.5 * (1 + Math.tanh(0.7978845608 * (z + 0.044715 * z ** 3))); // normal CDF
 
-export function recommendDraft(draft, { stats, model, profile, pickable, names = {} }) {
+export function recommendDraft(draft, { stats, model, profile, pickable, names = {}, learning = [] }) {
   const me = draft.allies.find((p) => p.me);
   if (!me || !stats) return null;
   const myRole = ROLE_INDEX[me.role];
@@ -39,9 +39,11 @@ export function recommendDraft(draft, { stats, model, profile, pickable, names =
   }
 
   const owned = pickable?.length ? new Set(pickable.map(String)) : null;
+  // What an ally is hovering is theirs: never suggest it to you.
+  const claimed = new Set(draft.allies.filter((p) => !p.me && p.hoverId).map((p) => p.hoverId));
   const all = [];
   for (const key of Object.keys(stats.champs)) {
-    if (taken.has(Number(key)) || (owned && !owned.has(key))) continue;
+    if (taken.has(Number(key)) || claimed.has(Number(key)) || (owned && !owned.has(key))) continue;
     const r = roleOf(key);
     if (model.share(key, r) < MIN_ROLE_SHARE) continue;
     all.push({ key, r, m: model.mastery(key, profile) });
@@ -70,13 +72,41 @@ export function recommendDraft(draft, { stats, model, profile, pickable, names =
     hover = scored.find((s) => s.key === hoverKey) ?? scoreCandidate(ctx, base, { key: hoverKey, r: roleOf(hoverKey) });
   }
 
+  // Traps: champions you could well pick (your pool, the popular ones at your role) that are
+  // clearly worse than the best choice in this draft, with the main reason.
+  const popular = all
+    .filter((c) => !scored.some((s) => s.key === c.key))
+    .sort((a, b) => model.rec(b.key, b.r)[0] - model.rec(a.key, a.r)[0])
+    .slice(0, 15)
+    .map((c) => scoreCandidate(ctx, base, c));
+  // Judged on the draft alone: not having played a champion is obvious, not a trap.
+  const situational = (s) => sigmoid(logit(s.p) - s.terms.mastery);
+  const candidates = [...scored, ...popular];
+  const bestHere = Math.max(...candidates.map(situational));
+  const avoid = candidates
+    .filter((s) => situational(s) <= bestHere - 0.035)
+    .sort((a, b) => situational(a) - situational(b))
+    .slice(0, 3)
+    .map((s) => trap(s, names));
+
+  // Champions the player wants to learn: is this draft a good moment to try one?
+  const learn = learning.map(String).filter((k) => stats.champs[k]).map((key) => {
+    if (taken.has(Number(key))) return { championId: Number(key), verdict: 'no', text: 'Déjà pris ou banni' };
+    const r = roleOf(key);
+    if (model.share(key, r) < MIN_ROLE_SHARE) return { championId: Number(key), verdict: 'offrole', text: 'Pas joué à ce poste' };
+    const s = scored.find((x) => x.key === key) ?? scoreCandidate(ctx, base, { key, r });
+    return learnVerdict(s, best, names);
+  });
+
   const verb = draft.myTurn === 'pick' ? 'À toi' : draft.phase === 'PLANNING' ? 'Déclare ton pick' : 'Prépare ton pick';
   return {
     verb,
     reference: { championId: Number(reference.key), label: names[reference.key] ?? reference.key },
     options: shown.map((s) => option(s, reference)),
     allClose: shown.length > 1 && shown.slice(1).every((s) => s.close),
-    hover: hover ? option(hover, reference) : null,
+    hover: hover ? { ...option(hover, reference), trap: avoid.some((a) => a.championId === Number(hover.key)) } : null,
+    avoid,
+    learn,
     enemyRoles,
     // The full draft analysis follows what you are looking at: your hover, else the first choice.
     analysis: analyze(ctx, hover ?? best),
@@ -149,6 +179,27 @@ function analyze({ model, allies, enemies, assignments }, s) {
     timing: theirs.length || ours.length >= 3 ? timing : null,
     overall: { p: s.p, low: Math.max(0, s.p - half), high: Math.min(1, s.p + half) },
   };
+}
+
+// The most negative factor explains why a champion is a trap here.
+function trap(s, names) {
+  const [k, v] = Object.entries(s.terms).filter(([t]) => t !== 'mastery').sort((a, b) => a[1] - b[1])[0];
+  const reason = s.worst && s.terms.lane < 0 && k === 'lane' ? `Lane : ${s.worst.name}` : LABELS[k];
+  return { championId: Number(s.key), p: s.p, reason, delta: toPoints(v, s.p) / 100, warn: s.compWarn || '' };
+}
+
+// Learning a champion costs its "Confort" penalty: judge the pick as if you already played it,
+// then say whether the draft leaves room for the learning cost.
+function learnVerdict(s, best, names) {
+  const skilled = sigmoid(logit(s.p) - s.terms.mastery);
+  const lanePts = toPoints(s.terms.lane, s.p);
+  const gap = best.p - skilled;
+  const base = { championId: Number(s.key), p: s.p, pSkilled: skilled };
+  if (lanePts <= -2) return { ...base, verdict: 'no', text: `Lane difficile${s.worst ? ` (${s.worst.name})` : ''} ${lanePts.toFixed(1).replace('.', ',').replace('-', '−')}` };
+  if (s.compWarn) return { ...base, verdict: 'no', text: s.compWarn };
+  if (gap <= 0.01) return { ...base, verdict: 'go', text: 'La draft lui va bien' };
+  if (gap <= 0.03) return { ...base, verdict: 'maybe', text: 'Un peu en dessous de tes meilleurs choix' };
+  return { ...base, verdict: 'no', text: `${Math.round(gap * 100)} points sous ton meilleur choix` };
 }
 
 function mainRole(model, key) {

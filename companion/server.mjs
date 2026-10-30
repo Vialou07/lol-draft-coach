@@ -45,7 +45,15 @@ export function startServer({ port, host = '0.0.0.0', snapshot, icon = async () 
       return res.end(JSON.stringify({ url, qr: url ? qrSvg(url) : null, group, groupQr: group ? qrSvg(group) : null }));
     }
     if (req.method === 'POST' && actions[path]) {
-      const result = await Promise.resolve(actions[path]()).catch((e) => ({ error: e.message }));
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      let input = null;
+      try {
+        input = body ? JSON.parse(body) : null;
+      } catch {
+        // ignore a malformed body
+      }
+      const result = await Promise.resolve(actions[path](input)).catch((e) => ({ error: e.message }));
       res.writeHead(200, { 'Content-Type': TYPES['.json'] });
       return res.end(JSON.stringify(result ?? {}));
     }

@@ -182,3 +182,15 @@ test('ARAM team: the shared bench is split, never the same champion for two play
     assert.equal(new Set(assigned).size, assigned.length, `${f}: a bench champion given twice`);
   }
 });
+
+test('traps and champions to learn come with a reason, and never an ally’s hover', () => {
+  const g = ranked.find((x) => x.file === 'q420-2026-10-24-03.json');
+  const session = g.events[32].session;
+  const draft = draftState(session);
+  const advice = recommend(draft, { stats, profile, champions, info, learning: [89, 497, 25] });
+  const hovers = draft.allies.filter((p) => !p.me && p.hoverId).map((p) => p.hoverId);
+  for (const o of [...advice.options, ...advice.avoid]) assert.ok(!hovers.includes(o.championId), 'ally hover suggested');
+  for (const t of advice.avoid) assert.ok(t.reason && t.reason !== 'Confort', 'a trap is about this draft');
+  assert.equal(advice.learn.length, 3);
+  for (const l of advice.learn) assert.ok(['go', 'maybe', 'no', 'offrole'].includes(l.verdict) && l.text);
+});
