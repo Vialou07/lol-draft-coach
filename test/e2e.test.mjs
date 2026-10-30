@@ -120,3 +120,15 @@ test('the live page and its files are served', async () => {
     await app.stop();
   }
 });
+
+test('the final draft analysis is kept as the game plan once champ select ends', async () => {
+  const r = await run('q420-2026-10-24-03.json', 'plan');
+  try {
+    const plan = r.states.at(-1).plan;
+    assert.ok(plan, 'plan kept for the loading screen');
+    assert.ok(plan.lane?.opponentId > 0, 'lane opponent in the plan');
+    assert.equal(plan.timing.length, 3);
+  } finally {
+    await cleanup(r);
+  }
+});

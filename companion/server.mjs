@@ -87,7 +87,13 @@ export function startServer({ port, host = '0.0.0.0', snapshot, icon = async () 
     server.once('error', reject);
     server.listen(port, host, () => {
       boundPort = server.address().port;
-      resolve({ broadcast, port: boundPort, close: () => new Promise((r) => { wss.close(); server.close(r); }) });
+      const close = () => new Promise((r) => {
+        for (const ws of wss.clients) ws.terminate();
+        wss.close();
+        server.close(r);
+        server.closeAllConnections?.();
+      });
+      resolve({ broadcast, port: boundPort, close });
     });
   });
 }

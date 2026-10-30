@@ -9,6 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, writeFileSync, mkdirSync, statSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { ASSET_FILES } from '../companion/assets.mjs';
+import { VERSION } from '../companion/version.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const dist = `${root}dist/`;
@@ -28,6 +29,7 @@ await build({
   external: ['bufferutil', 'utf-8-validate'], // optional speed-ups of ws
   logOverride: { 'empty-import-meta': 'silent' }, // only used when running from the repository
   logLevel: 'warning',
+  define: { __LDC_VERSION__: JSON.stringify(VERSION) },
 });
 
 writeFileSync(
@@ -44,4 +46,4 @@ execFileSync(process.execPath, ['--experimental-sea-config', `${dist}sea-config.
 copyFileSync(process.execPath, exe);
 execFileSync(process.execPath, [`${root}node_modules/postject/dist/cli.js`, exe, 'NODE_SEA_BLOB', `${dist}sea-prep.blob`, '--sentinel-fuse', FUSE, '--overwrite'], { stdio: 'inherit' });
 
-console.log(`\n${exe} (${Math.round(statSync(exe).size / 1e6)} Mo)`);
+console.log(`\n${exe} (${Math.round(statSync(exe).size / 1e6)} Mo, version ${VERSION})`);

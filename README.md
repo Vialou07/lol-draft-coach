@@ -2,6 +2,9 @@
 
 Conseiller de sélection de champions en direct, pour Thomas et ses potes.
 
+**[Télécharger pour Windows](https://github.com/Vialou07/lol-draft-coach/releases/latest/download/LolDraftCoach.exe)**
+· page : [vialou07.github.io/lol-draft-coach](https://vialou07.github.io/lol-draft-coach/)
+
 Un petit programme (le compagnon) tourne sur le PC pendant que LoL est ouvert. Il lit la sélection
 des champions dans le client, en lecture seule, et affiche une page qui se met à jour toute seule,
 sur le PC ou sur le téléphone posé à côté (même Wi-Fi).
@@ -14,6 +17,9 @@ sur le PC ou sur le téléphone posé à côté (même Wi-Fi).
 3. Une seule fois : coller le lien du groupe (envoyé par Thomas) dans « Ou colle le lien du groupe d'un pote »,
    puis « Rejoindre ». C'est mémorisé.
 4. Ensuite : lancer le fichier avant de jouer. Le téléphone suit la même draft via le lien du groupe.
+
+Mises à jour : le programme regarde au démarrage (puis toutes les 6 heures) s'il existe une nouvelle version
+sur GitHub. Si oui, il la télécharge et redémarre tout seul, jamais pendant une sélection ou une partie.
 
 Les données (stats, cache, groupe) sont rangées dans `%LOCALAPPDATA%\LolDraftCoach`.
 
@@ -70,7 +76,7 @@ properties are trademarks or registered trademarks of Riot Games, Inc.
 ## Développement
 
 ```
-npm test                                       # 37 tests, sans réseau ni client LoL
+npm test                                       # 42 tests, sans réseau ni client LoL
 npm run build:exe                              # dist/LolDraftCoach.exe (Node SEA, environ 90 Mo)
 npm run demo -- q2400-2026-10-24-40.json       # rejoue une vraie partie dans la page
 node tools/extract-log-sessions.mjs            # transforme les logs du client en cas de test anonymisés

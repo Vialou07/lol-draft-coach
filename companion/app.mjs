@@ -14,6 +14,9 @@ import { loadEloStats, TIER_SLUGS, DEFAULT_TIER } from './stats-elo.mjs';
 import { loadGroup, groupLink, playerIdFor, startRelay, parseGroupLink, saveGroup } from './relay.mjs';
 import { assignBench } from './team.mjs';
 import { readAsset } from './assets.mjs';
+import { VERSION } from './version.mjs';
+import { isPackaged } from './paths.mjs';
+import { cleanupOldVersion, findUpdate, installUpdate, restart } from './update.mjs';
 import { dataFile } from './paths.mjs';
 import { readLiveGame } from './live.mjs';
 import { adviseBuild, championKeyOf } from './advise-build.mjs';
@@ -87,6 +90,8 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     champions: {},
     assets: { ddragon: await latestDdragon() },
     settings: await readFile(dataFile('settings.json'), 'utf8').then(JSON.parse).catch(() => ({ learning: [] })),
+    version: VERSION,
+    update: null,
     updatedAt: 0,
   };
   let client = null;
@@ -289,10 +294,18 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     const live = JSON.parse(await readAsset('test/fixtures/live-sample.json'));
     state.demo = { name: 'game', profile: profile ? 'real' : 'sample', caption: 'En partie : quoi acheter avec tes golds maintenant, ton build habituel, et ce que leur compo demande.' };
     state.status = 'in-game';
+    state.plan = {
+      championId: 267,
+      kind: 'draft',
+      lane: { opponentId: 80, delta: 0.005, games: 6782, personal: { games: 3, wins: 2 } },
+      timing: [{ label: 'Courte', delta: 0.047 }, { label: 'Moyenne', delta: 0.011 }, { label: 'Longue', delta: -0.033 }],
+      needs: ['Personne pour engager les fights chez vous'],
+      teams: null,
+    };
     await adviseLive(live);
     setTimeout(() => {
       if (state.demo?.name !== 'game') return;
-      Object.assign(state, { demo: null, game: null, status: client ? 'connected' : 'no-client' });
+      Object.assign(state, { demo: null, game: null, plan: null, status: client ? 'connected' : 'no-client' });
       liveBuild = null;
       changed();
     }, 45000);
@@ -301,7 +314,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
 
   const stopDemo = () => {
     if (state.demo?.name === 'game') {
-      Object.assign(state, { demo: null, game: null, status: client ? 'connected' : 'no-client' });
+      Object.assign(state, { demo: null, game: null, plan: null, status: client ? 'connected' : 'no-client' });
       liveBuild = null;
       changed();
       return {};
@@ -357,9 +370,17 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     return { ok: true };
   };
 
+  // The final read of the draft becomes the game plan, shown from the loading screen on.
+  const keepPlan = () => {
+    const an = state.advice?.analysis;
+    if (!state.draft || !an) return;
+    state.plan = { championId: an.championId, kind: state.draft.kind, lane: an.lane ?? null, timing: an.timing ?? null, needs: an.needs ?? [], teams: an.teams ?? null };
+  };
+
   const onSession = (session) => {
     if (demo) stopDemo(); // a real champ select always wins over a demo
     const fresh = state.status !== 'champ-select';
+    if (fresh) state.plan = null;
     rawSession = session;
     state.draft = draftState(session, { gameMode: state.queue?.gameMode });
     const key = draftKey(state.draft);
@@ -411,10 +432,13 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     if (state.draft) {
       const me = state.draft.allies.find((p) => p.me);
       lastPick = { kind: state.draft.kind, role: me?.role ?? '' };
+      if (phase !== 'ChampSelect') keepPlan();
     }
+    if (!['ChampSelect', 'GameStart', 'InProgress'].includes(phase)) state.plan = null;
     state.gameflow = phase;
     if (phase === 'InProgress') startLive();
     else stopLive();
+    maybeInstall();
     if (demo && phase !== 'ChampSelect') return changed();
     if (demo) stopDemo();
     if (phase === 'ChampSelect') {
@@ -480,6 +504,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       if (topic === TOPICS.gameflow) return onGameflow(client, event.data);
       if (event.eventType === 'Delete') {
         onLog('Fin de la sélection des champions.');
+        keepPlan();
         state.draft = null;
         state.advice = null;
         lastDraftKey = '';
@@ -511,6 +536,52 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   const schedule = () => {
     if (!stopped) retry = setTimeout(connect, RETRY_MS);
   };
+
+  // Self-update (the .exe only): never during a champ select or a game.
+  let pendingUpdate = null;
+  let installing = false;
+  const busy = () => state.status === 'champ-select' || ['ReadyCheck', 'ChampSelect', 'GameStart', 'InProgress'].includes(state.gameflow);
+  const maybeInstall = async () => {
+    if (!pendingUpdate || installing || busy()) return;
+    installing = true;
+    state.update = { version: pendingUpdate.version, status: 'installing' };
+    changed();
+    try {
+      await installUpdate(pendingUpdate);
+      onLog(`Mise à jour ${pendingUpdate.version} installée, redémarrage.`);
+      state.update = { version: pendingUpdate.version, status: 'restarting' };
+      changed();
+      stopped = true;
+      clearTimeout(retry);
+      ws?.terminate();
+      await relay?.stop();
+      await server.close();
+      restart();
+    } catch (e) {
+      onLog(`Mise à jour impossible : ${e.message}`);
+      state.update = { version: pendingUpdate.version, status: 'failed' };
+      installing = false;
+      changed();
+    }
+  };
+  const checkUpdate = async () => {
+    const update = await findUpdate(VERSION);
+    if (update && update.version !== pendingUpdate?.version) {
+      pendingUpdate = update;
+      onLog(`Nouvelle version disponible : ${update.version}`);
+      state.update = { version: update.version, status: 'ready' };
+      changed();
+    }
+    maybeInstall();
+  };
+  let updateTimer = null;
+  if (isPackaged() || process.env.LDC_UPDATE_URL) {
+    cleanupOldVersion();
+    updateTimer = setTimeout(function again() {
+      checkUpdate();
+      updateTimer = setTimeout(again, 6 * 3600 * 1000);
+    }, Number(process.env.LDC_UPDATE_DELAY_MS ?? 15000));
+  }
 
   // Stats can take a while to download: serve the page right away and advise once they land.
   const ready = loadInfo(state.assets.ddragon)
@@ -553,6 +624,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       clearTimeout(retry);
       ws?.terminate();
       clearTimeout(liveTimer);
+      clearTimeout(updateTimer);
       await relay?.stop();
       await server.close();
     },

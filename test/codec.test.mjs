@@ -31,3 +31,11 @@ test('a group link gives back its id and key, a random string does not', async (
   assert.equal(parseGroupLink('https://example.com/#g=nope'), null);
   assert.equal(parseGroupLink('bonjour'), null);
 });
+
+test('versions compare as numbers, not text', async () => {
+  const { isNewer } = await import('../companion/version.mjs');
+  assert.ok(isNewer('v0.2.10', '0.2.9'));
+  assert.ok(isNewer('0.3.0', '0.2.9'));
+  assert.ok(!isNewer('v0.2.0', '0.2.0'));
+  assert.ok(!isNewer('0.1.9', '0.2.0'));
+});

@@ -49,3 +49,35 @@ test('u.gg overview layout: core, skills and next-slot options are read', () => 
   assert.deepEqual(b.slots[0][0], { item: 3504, wins: 10, games: 20 });
   assert.equal(b.games, 100);
 });
+
+test('a tank facing a crit-heavy team gets Randuin, from the items they actually bought', () => {
+  const crits = Object.entries(items).filter(([, it]) => it.buyable && it.tags.includes('CriticalStrike') && it.cost >= 2500).map(([id]) => Number(id)).slice(0, 4);
+  const game = structuredClone(live);
+  const me = game.allPlayers[4];
+  Object.assign(me, { championName: 'Leona', rawChampionName: 'game_character_displayname_Leona' });
+  game.allPlayers[8].items = crits.slice(0, 2).map((itemID) => ({ itemID }));
+  game.allPlayers[7].items = crits.slice(2, 4).map((itemID) => ({ itemID }));
+  const a = adviseBuild(game, { build, items, info, physOf });
+  assert.ok(a.enemy.signals.crit >= 3, `crit items seen: ${a.enemy.signals.crit}`);
+  const randuin = a.adapt.find((x) => x.item === 3143);
+  assert.ok(randuin, `Randuin suggested: ${JSON.stringify(a.adapt)}`);
+  assert.match(randuin.reason, /critiques/);
+});
+
+test('the enemy running away with the game is spotted by item value, with a counter to their damage', () => {
+  const game = structuredClone(live);
+  game.allPlayers[8].items = [3031, 3033, 3036, 3046].filter((id) => items[id]).map((itemID) => ({ itemID })); // Miss Fortune
+  game.allPlayers[8].scores = { kills: 9, deaths: 1, assists: 3 };
+  const a = adviseBuild(game, { build, items, info, physOf });
+  assert.equal(a.enemy.threat?.championId, 21);
+  assert.ok(a.adapt.some((x) => /s'envole/.test(x.reason)), JSON.stringify(a.adapt));
+});
+
+test('alternatives: other choices at that slot with enough games, and the strongest adaptation first', () => {
+  const rich = structuredClone(live);
+  rich.allPlayers[4].items = [3870, 6620, 3158].map((itemID) => ({ itemID })); // core done: next is slot 4
+  const a = adviseBuild(rich, { build, items, info, physOf });
+  assert.ok(a.alternatives.length >= 2);
+  assert.ok(a.alternatives[0].reason, 'first alternative answers their team');
+  for (const alt of a.alternatives.slice(1)) assert.ok(alt.games >= 300 && alt.winrate > 0.3 && alt.winrate < 0.7);
+});

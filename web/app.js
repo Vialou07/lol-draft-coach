@@ -16,6 +16,9 @@ const DDRAGON = '16.21.1';
 const SCALE = [0.42, 0.62]; // every gauge shares one scale, so gaps between cards are visible
 const LEGAL = 'LoL Draft Coach isn’t endorsed by Riot Games and doesn’t reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.';
 const onPc = ['localhost', '127.0.0.1'].includes(location.hostname);
+const DOWNLOAD = 'https://github.com/Vialou07/lol-draft-coach/releases/latest/download/LolDraftCoach.exe';
+const REPO = 'https://github.com/Vialou07/lol-draft-coach';
+const onWindows = /Windows NT/.test(navigator.userAgent) && !/Mobile|Android|iPhone|iPad/.test(navigator.userAgent);
 const hash = new URLSearchParams(location.hash.slice(1));
 const remote = hash.get('g') && hash.get('k') ? { group: hash.get('g'), key: hash.get('k') } : null;
 const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
@@ -77,12 +80,12 @@ function renderPeople() {
 
 function renderGroupWaiting() {
   if (!people.length) {
-    return `<section class="wait"><div class="pulse"></div><h1>En attente du groupe</h1>
+    return `${pcBanner()}<section class="wait"><div class="pulse"></div><h1>En attente du groupe</h1>
       <p>Dès qu'un membre lance le compagnon sur son PC, sa draft apparaît ici toute seule.</p></section><p class="legal">${LEGAL}</p>`;
   }
   const status = (m) => (m.status === 'no-client' ? 'client LoL fermé' : ({ Lobby: 'dans le salon', Matchmaking: 'en recherche de partie', ReadyCheck: 'partie trouvée', InProgress: 'en partie', ChampSelect: 'en sélection' }[m.gameflow] ?? 'connecté'));
   const hosts = [...new Map(people.map((p) => [p.msg.name, p.msg])).values()];
-  return `${renderPeople()}<section class="wait"><div class="pulse ok"></div><h1>Groupe connecté</h1>
+  return `${pcBanner()}${renderPeople()}<section class="wait"><div class="pulse ok"></div><h1>Groupe connecté</h1>
     <p>${hosts.map((m) => `${esc(m.name)} : ${status(m)}`).join('<br>')}</p>
     <p>Les conseils apparaissent dès la sélection des champions.</p></section><p class="legal">${LEGAL}</p>`;
 }
@@ -126,7 +129,8 @@ function renderWaiting() {
       <form class="add" data-learn-form><input list="champ-names" name="champ" placeholder="Ajouter un champion" autocomplete="off"><button>Ajouter</button></form>
       <datalist id="champ-names">${names.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
     </section>`;
-  return `<section class="wait">${body}</section>${who}${renderProfile()}${demo}${learn}${qr}<p class="legal">${LEGAL}</p>`;
+  const version = state?.version ? `<p class="note">Version ${esc(state.version)}${state.update?.status === 'ready' ? ` · la ${esc(state.update.version)} s'installera après ta partie` : ''}</p>` : '';
+  return `${updateBanner()}<section class="wait">${body}</section>${who}${renderProfile()}${demo}${learn}${qr}${version}<p class="legal">${LEGAL}</p>`;
 }
 
 // Your own record, as it is: counts, not percentages, so small samples look small.
@@ -286,6 +290,28 @@ const itemIcon = (id, cls = '') => `<img class="${cls}" src="https://ddragon.lea
 const clock = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 const golds = (n) => `${Math.round(n).toLocaleString('fr-FR')} po`;
 
+// The game plan from the draft: your lane, when your team is strong, what it lacks.
+function renderPlan() {
+  const plan = state.plan;
+  if (!plan) return '';
+  const rows = [];
+  if (plan.lane?.opponentId) {
+    const personal = plan.lane.personal ? `<span class="small">toi : ${plan.lane.personal.wins} V · ${plan.lane.personal.games - plan.lane.personal.wins} D</span>` : '';
+    rows.push(`<div class="arow"><span class="alabel">Ta lane</span><div class="abody">${mini(plan.lane.opponentId)}<span class="aname">${esc(champName(plan.lane.opponentId))}</span>${verdict(plan.lane.delta)}${personal}</div></div>`);
+  }
+  if (plan.timing) rows.push(`<div class="arow"><span class="alabel">Timing</span><div class="abody"><span>${esc(timingVerdict(plan.timing))}</span></div></div>`);
+  const needs = (plan.needs ?? []).map((n) => `<div class="warn">${esc(n)}</div>`).join('');
+  if (!rows.length && !needs) return '';
+  return `<div class="label"><span>Plan de jeu</span><b>d'après la draft</b></div><section class="analysis">${rows.join('')}${needs}</section>`;
+}
+
+function renderLoading() {
+  return `<header class="head"><div><h1>Chargement</h1><div class="sub"><i class="dot"></i>${esc(champName(state.plan.championId))}</div></div></header>
+    ${renderPlan()}
+    <p class="note">Les conseils de build arrivent dès que la partie démarre.</p>
+    <p class="legal">${LEGAL}</p>`;
+}
+
 function renderGame() {
   const g = state.game;
   const name = (id) => g.itemNames?.[id] ?? `#${id}`;
@@ -296,18 +322,30 @@ function renderGame() {
     ? `<section class="card buy">${itemIcon(g.buy.item, 'portrait')}
         <div class="title"><span class="name">${esc(name(g.buy.item))}</span></div>
         <div class="num"><span class="big ${g.buy.short ? 'down' : 'up'}">${g.buy.short ? `−${g.buy.short}` : g.buy.cost}<small> po</small></span></div>
-        <div class="chips"><span class="tag">${esc(g.buy.short ? `il te manque ${g.buy.short} po` : g.buy.item !== g.buy.for ? `vers ${name(g.buy.for)}` : 'item complet')}</span></div>
+        <div class="chips"><span class="tag">${esc(g.buy.short ? `il te manque ${g.buy.short} po` : g.buy.item !== g.buy.for ? `vers ${name(g.buy.for)}` : 'item complet')}${g.nextStats ? ` · ${pct(g.nextStats.winrate)} sur ${g.nextStats.games.toLocaleString('fr-FR')} parties` : ''}</span></div>
       </section>`
     : '<p class="note">Ton build est complet.</p>';
+  const alternatives = (g.alternatives ?? []).length
+    ? `<section class="analysis">${g.alternatives.map((a) => `<div class="arow"><span class="trap">${itemIcon(a.item, 'mini-item')}<span class="aname">${esc(name(a.item))}</span></span><div class="abody"><span class="muted small">${esc(a.reason ?? `${pct(a.winrate)} sur ${a.games.toLocaleString('fr-FR')} parties`)}</span></div></div>`).join('')}</section>`
+    : '';
   const path = g.path.length
     ? `<section class="path">${g.path.map((p) => `<div class="slot-item ${p.owned ? 'owned' : ''} ${p.item === g.buy?.for ? 'next' : ''}">${itemIcon(p.item)}${p.owned ? '<b>✓</b>' : ''}</div>`).join('<i class="arrow">›</i>')}</section>`
     : '';
-  const adapt = g.adapt.length
+  const shownAbove = new Set((g.alternatives ?? []).map((a) => a.item));
+  const adaptList = g.adapt.filter((a) => !shownAbove.has(a.item));
+  const adapt = adaptList.length
     ? `<div class="label"><span>Adapté à leur compo</span><b>à toi de voir</b></div>
-      <section class="analysis">${g.adapt.map((a) => `<div class="arow"><span class="trap">${itemIcon(a.item, 'mini-item')}<span class="aname">${esc(name(a.item))}</span></span><div class="abody"><span class="muted small">${esc(a.reason)}</span></div></div>`).join('')}</section>`
+      <section class="analysis">${adaptList.map((a) => `<div class="arow"><span class="trap">${itemIcon(a.item, 'mini-item')}<span class="aname">${esc(name(a.item))}</span></span><div class="abody"><span class="muted small">${esc(a.reason)}</span></div></div>`).join('')}</section>`
     : '';
   const e = g.enemy ?? {};
+  const sig = e.signals ?? {};
+  const bought = [[sig.crit, 'critiques'], [sig.attackSpeed, 'vitesse d’attaque'], [sig.lifesteal, 'vol de vie'], [sig.armor, 'armure'], [sig.magicResist, 'résistance magique']]
+    .filter(([n]) => n >= 2)
+    .map(([n, label]) => `<span class="chip">${n} ${label}</span>`)
+    .join('');
   const enemyRows = [
+    e.threat ? `<div class="arow"><span class="alabel">S'envole</span><div class="abody">${mini(e.threat.championId)}<span class="aname">${esc(champName(e.threat.championId))}</span><span class="muted small">${golds(e.threat.value)} d'items${e.threat.kda ? ` · ${esc(e.threat.kda)}` : ''}</span></div></div>` : '',
+    bought ? `<div class="arow"><span class="alabel">Leurs items</span><div class="abody">${bought}</div></div>` : '',
     e.physical != null ? `<div class="arow"><span class="alabel">Leurs dégâts</span><div class="abody">${damageBar({ physical: e.physical })}</div></div>` : '',
     e.healers?.length ? `<div class="arow"><span class="alabel">Soins</span><div class="abody">${e.healers.map((id) => `<span class="duo">${mini(id)}<span class="small">${esc(champName(id))}</span></span>`).join('')}</div></div>` : '',
     `<div class="arow"><span class="alabel">Tanks</span><div class="abody"><b>${e.tanks ?? 0}</b></div></div>`,
@@ -321,8 +359,10 @@ function renderGame() {
       <div><h1>En partie</h1><div class="sub"><i class="dot"></i>${esc(champName(g.championId))} · ${clock(g.gameTime)}</div></div>
       <div class="gold">${golds(g.gold)}</div>
     </header>
+    ${renderPlan()}
     <div class="label"><span>Achète maintenant</span></div>
     ${buy}
+    ${alternatives ? `<div class="label"><span>Ou bien</span></div>${alternatives}` : ''}
     <div class="label"><span>Ton build</span><b>${g.source ? `${Math.round((g.source.wins / Math.max(1, g.source.games)) * 100)} % de victoires` : ''}</b></div>
     ${path}
     ${adapt}
@@ -331,6 +371,32 @@ function renderGame() {
     <p class="note">${esc(source)}</p>
     <p class="legal">${LEGAL}</p>`;
 }
+
+// The public page without a group link: what it is, and the download for Windows.
+function renderLanding() {
+  const pc = `<section class="tile"><div class="tile-title">Sur ton PC Windows</div>
+      <p>Un seul fichier à lancer avant de jouer. Il lit ta sélection dans le client LoL (lecture seule) et se met à jour tout seul.</p>
+      <div class="buttons"><a class="button primary" href="${DOWNLOAD}">Télécharger LoL Draft Coach</a></div>
+      <p class="small muted">Windows va prévenir (fichier non signé) : « Informations complémentaires », puis « Exécuter quand même ». Colle ensuite le lien du groupe dans la page qui s'ouvre.</p>
+    </section>`;
+  const phone = `<section class="tile"><div class="tile-title">Sur ton téléphone</div>
+      <p>Ouvre le lien du groupe envoyé par Thomas : tu y verras ta draft en direct, quand ton PC ou celui d'un pote de ta partie a le programme lancé.</p>
+    </section>`;
+  return `<section class="wait"><h1>LoL Draft Coach</h1><p>Les meilleurs choix pendant ta sélection des champions et ton build en partie, pour toi et tes potes.</p></section>
+    ${onWindows ? pc + phone : phone + pc}
+    <p class="note"><a href="${REPO}">Le projet sur GitHub</a></p>
+    <p class="legal">${LEGAL}</p>`;
+}
+
+const pcBanner = () => (remote && onWindows
+  ? `<div class="demo-bar"><span>Sur ce PC ? Lance le programme pour avoir tes propres conseils.</span><a class="button" href="${DOWNLOAD}">Télécharger</a></div>`
+  : '');
+
+const updateBanner = () => {
+  const u = state?.update;
+  if (!u || u.status === 'ready' || u.status === 'failed') return '';
+  return `<div class="demo-bar step"><span>Mise à jour vers la version ${esc(u.version)}… la page revient toute seule.</span></div>`;
+};
 
 function renderAvoid(a) {
   if (!a.avoid?.length) return '';
@@ -377,8 +443,16 @@ function renderAdvice(d, a) {
 }
 
 function render() {
+  if (!onPc && !remote) {
+    app.innerHTML = renderLanding();
+    return;
+  }
   if (state?.game) {
     app.innerHTML = renderGame();
+    return;
+  }
+  if (state?.plan && ['GameStart', 'InProgress'].includes(state.gameflow)) {
+    app.innerHTML = renderLoading();
     return;
   }
   if (remote && !state) {
@@ -495,7 +569,7 @@ function onState(next) {
     deadline = null;
   }
   if (!d) opened.clear();
-  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name), state.settings, state.game, state.profileSummary, phone?.group, state.group]);
+  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name), state.settings, state.game, state.profileSummary, phone?.group, state.group, state.plan, state.update]);
   if (key !== lastKey) {
     lastKey = key;
     render();
