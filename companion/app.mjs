@@ -40,6 +40,7 @@ const DEMO_SPEED = 1.5;
 const LIVE_POLL_MS = 3000;
 const BUILD_RETRY_MS = 30000;
 const IN_GAME = ['ChampSelect', 'GameStart', 'InProgress', 'Reconnect'];
+const AFTER_GAME = ['WaitingForStats', 'PreEndOfGame', 'EndOfGame'];
 const MAYHEM = new Set([2400, 2401, 2403, 2405]);
 const RECORD_EVERY = 15; // seconds of game time between two reads kept in live-last.jsonl
 const RECAP_TRIES = 12; // the client files the game a few seconds after the end
@@ -555,6 +556,12 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     if (lastGameId && !IN_GAME.includes(phase) && phase !== 'GameStart') {
       fetchRecap(client, lastGameId);
       lastGameId = null;
+    } else if (AFTER_GAME.includes(phase)) {
+      // Started after the game ended (or restarted on its end screen): the client still knows which game it was.
+      tryGet(client, '/lol-gameflow/v1/session').then((s) => {
+        const id = s?.gameData?.gameId;
+        if (id && state.recap?.gameId !== id) fetchRecap(client, id);
+      });
     }
     maybeInstall();
     if (demo && phase !== 'ChampSelect') return changed();
