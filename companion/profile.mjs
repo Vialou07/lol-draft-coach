@@ -138,7 +138,7 @@ export async function buildProfile(client, { puuid, maxGames = MAX_GAMES } = {})
     matchups,
     rank: solo?.tier && solo.tier !== 'NONE' ? { tier: solo.tier, division: solo.division } : null,
     gamesRead: rows.length,
-    recent: rows.filter((r) => r.at).sort((a, b) => b.at - a.at).slice(0, RECENT).map(({ championId, queueId, win, at }) => ({ championId, queueId, win: Boolean(win), at })),
+    recent: rows.filter((r) => r.at).sort((a, b) => b.at - a.at).slice(0, RECENT).map(({ gameId, championId, queueId, win, at }) => ({ gameId: Number(gameId), championId, queueId, win: Boolean(win), at })),
   };
 }
 

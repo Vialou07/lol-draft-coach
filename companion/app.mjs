@@ -40,6 +40,7 @@ const IN_GAME = ['ChampSelect', 'GameStart', 'InProgress', 'Reconnect'];
 const RECORD_EVERY = 15; // seconds of game time between two reads kept in live-last.jsonl
 const RECAP_TRIES = 12; // the client files the game a few seconds after the end
 const RECAP_WAIT_MS = 10000;
+const LAST_RECAP_MS = 3 * 3600 * 1000; // at start, the recap of a game played less than this ago
 const UPDATE_RETRY_MS = 3600 * 1000;
 // With the client closed the demo has no personal data, which would rate every champion as
 // never played: a sample support pool stands in, and the page says so.
@@ -586,6 +587,9 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       return schedule(); // client starting up
     }
     await refreshProfile(client);
+    // Started (or restarted) after a game: its recap is still worth showing.
+    const last = profile?.recent?.[0];
+    if (!state.recap && last?.gameId && Date.now() - last.at < LAST_RECAP_MS) fetchRecap(client, last.gameId);
 
     ws = subscribe(client, [TOPICS.session, TOPICS.gameflow], (topic, event) => {
       if (topic === TOPICS.gameflow) return onGameflow(client, event.data);
