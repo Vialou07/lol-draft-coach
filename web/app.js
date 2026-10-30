@@ -11,7 +11,7 @@ const COLS = ['top', 'jungle', 'mid', 'bot', 'support'];
 const COL_LABELS = { top: 'TOP', jungle: 'JGL', mid: 'MID', bot: 'ADC', support: 'SUP' };
 const ROLE_NAMES = { top: 'Top', jungle: 'Jungle', mid: 'Mid', bot: 'ADC', support: 'Support' };
 const DDRAGON = '16.21.1';
-const SCALE = [0.4, 0.6]; // margin bars share one scale: 40 to 60 % win chance
+const SCALE = [0.42, 0.62]; // every gauge shares one scale, so gaps between cards are visible
 const LEGAL = 'LoL Draft Coach isn’t endorsed by Riot Games and doesn’t reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.';
 const onPc = ['localhost', '127.0.0.1'].includes(location.hostname);
 
@@ -113,15 +113,15 @@ function renderGrid(d, a) {
   return `<section class="grid">${head}<div class="rl">NOUS</div>${ours}<div class="rl">EUX</div>${theirs}</section>`;
 }
 
-function card(o, { flat = false, ref = false } = {}) {
+function card(o, { flat = false, ref = false, best = false } = {}) {
   const isBan = o.gain != null;
   const showNumber = !flat && (isBan || o.p != null);
   const pos = (x) => Math.max(0, Math.min(100, ((x - SCALE[0]) / (SCALE[1] - SCALE[0])) * 100));
   const number = isBan
     ? `<span class="big ${trend(o.gain, 0.05)}">${pts(o.gain)}<small>pt</small></span>`
     : `<span class="big">${Math.round(o.p * 100)}<small>%</small></span>`;
-  const margin = showNumber && !isBan && o.low != null
-    ? `<div class="margin"><i style="left:${pos(o.low)}%;right:${100 - pos(o.high)}%"></i><b style="left:${pos(o.p)}%"></b></div>`
+  const gauge = showNumber && !isBan
+    ? `<div class="gauge ${best ? 'best' : ''}"><i class="range" style="left:${pos(o.low ?? o.p)}%;right:${100 - pos(o.high ?? o.p)}%"></i><i class="fill" style="width:${pos(o.p)}%"></i><i class="mid" style="left:${pos(0.5)}%"></i></div>`
     : '';
   const chips = (o.reasons ?? []).map((r) => `<span class="chip ${trend(r.delta)}">${esc(r.label)}<b>${pts(r.delta)}</b></span>`).join('');
   // A long tag (bans) moves to the second line so the name never gets cut.
@@ -137,8 +137,9 @@ function card(o, { flat = false, ref = false } = {}) {
     ${o.close ? '<span class="eq">≈ égalité</span>' : ''}
     ${img(o.championId, 'portrait')}
     <div class="title"><span class="name">${esc(champName(o.championId))}</span>${tagInTitle ? `<span class="tag">${esc(o.tag ?? '')}</span>` : ''}</div>
-    <div class="num">${showNumber ? `${number}${margin}` : ''}</div>
+    <div class="num">${showNumber ? number : ''}</div>
     <div class="chips">${tagInTitle ? chips : `<span class="tag">${esc(o.tag)}</span>`}</div>
+    ${gauge}
     ${o.warn ? `<div class="warn">${esc(o.warn)}</div>` : ''}
     ${detail}
   </article>`;
@@ -155,13 +156,17 @@ function renderAdvice(d, a) {
   if (a.verb === 'Verrouillé') title = 'Ton champion';
   if (a.allClose) right = '≈ les 3 se valent';
   if (flat) right = '';
-  const cards = a.options.map((o) => card(o, { flat })).join('');
+  const topP = Math.max(...a.options.map((o) => o.p ?? -1));
+  const cards = a.options.map((o) => card(o, { flat, best: o.p != null && o.p === topP && a.options.length > 1 })).join('');
+  const legend = !flat && d.myTurn !== 'ban' && a.options.some((o) => o.p != null)
+    ? '<p class="legend">Ligne blanche = 50 %. Un point de plus = une victoire de plus sur 100 parties. Entre deux bons choix, l’écart est souvent de 1 à 4 points.</p>'
+    : '';
   const refCard = a.hover
     ? `<div class="label"><span>Ton survol dans le client</span></div>${card(a.hover, { ref: true })}`
     : a.current
       ? `<div class="label"><span>Ton champion</span></div>${card(a.current, { ref: true, flat })}`
       : '';
-  return `<div class="label"><span>${title}</span><b>${esc(right)}</b></div>${cards}${refCard}${a.note ? `<p class="note">${esc(a.note)}</p>` : ''}`;
+  return `<div class="label"><span>${title}</span><b>${esc(right)}</b></div>${cards}${legend}${refCard}${a.note ? `<p class="note">${esc(a.note)}</p>` : ''}`;
 }
 
 function render() {
@@ -175,9 +180,12 @@ function render() {
   const h = headline(d, a, me);
   const mode = state.queue?.name || QUEUES[d.queueId] || 'Partie';
   const sub = [ROLE_NAMES[me?.role], mode].filter(Boolean).join(' · ');
-  const demo = state.demo
-    ? `<div class="demo-bar"><span>Démo : une de tes vraies sélections${state.demo.profile ? ', avec ton profil' : ', sans ton profil (client fermé)'}</span><button data-demo="stop">Arrêter</button></div>`
-    : '';
+  const who = state.demo?.profile === 'real' ? 'ton profil' : 'un profil d’exemple (ouvre le client LoL pour le tien)';
+  const demo = !state.demo
+    ? ''
+    : state.demo.caption
+      ? `<div class="demo-bar step"><span>${esc(state.demo.caption)}</span><button data-demo="next">Continuer</button></div>`
+      : `<div class="demo-bar"><span>Démo d’une de tes vraies sélections, avec ${who}</span><button data-demo="stop">Arrêter</button></div>`;
   app.innerHTML = `${demo}
     <header class="head">
       <div><h1 class="${h.mine ? 'mine' : ''} ${h.text.length > 14 ? 'long' : ''}">${esc(h.text)}</h1><div class="sub"><i class="dot"></i>${esc(sub)}</div></div>

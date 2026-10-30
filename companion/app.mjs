@@ -17,7 +17,35 @@ const DEMOS = {
   ranked: { file: 'q420-2026-10-24-03.json', queue: { id: 420, gameMode: 'CLASSIC', name: 'Classée solo/duo' } },
   aram: { file: 'q2400-2026-10-24-40.json', queue: { id: 2400, gameMode: 'KIWI', name: 'ARAM du Chaos' } },
 };
-const DEMO_SPEED = 3;
+const DEMO_SPEED = 1.5;
+// With the client closed the demo has no personal data, which would rate every champion as
+// never played: a sample support pool stands in, and the page says so.
+const SAMPLE_PROFILE = {
+  champions: {
+    267: { byQueue: { 420: { games: 30, wins: 16 } } }, // Nami
+    43: { byQueue: { 420: { games: 20, wins: 10 } } }, // Karma
+    117: { byQueue: { 420: { games: 12, wins: 6 } } }, // Lulu
+    412: { byQueue: { 420: { games: 8, wins: 4 } } }, // Thresh
+    89: { byQueue: { 420: { games: 4, wins: 2 } } }, // Leona
+  },
+};
+const CAPTIONS = {
+  ban: 'Ton ban : les 3 champions qui menacent le plus ton équipe. Un ban change peu le résultat.',
+  pick: 'À toi : tes 3 meilleurs choix. Le gros chiffre = ta chance de gagner avec ce champion. Touche une carte pour voir pourquoi.',
+  locked: 'Verrouillé : ta chance avec ce champion, et ce qui pèse dans un sens ou dans l’autre.',
+  aram: 'Le banc est rempli : chaque champion du banc que tu possèdes, comparé à ton champion actuel.',
+};
+
+// Moments where the demo stops and explains, until the viewer taps « Continuer ».
+function keyMoment(prev, d) {
+  const me = d.allies.find((p) => p.me);
+  const before = prev?.allies.find((p) => p.me);
+  if (d.kind === 'aram') return d.phase === 'FINALIZATION' && prev?.phase !== 'FINALIZATION' ? 'aram' : null;
+  if (d.myTurn === 'ban' && prev?.myTurn !== 'ban') return 'ban';
+  if (d.myTurn === 'pick' && prev?.myTurn !== 'pick') return 'pick';
+  if (me?.championId && !before?.championId) return 'locked';
+  return null;
+}
 const DDRAGON_FALLBACK = '16.21.1';
 
 async function latestDdragon() {
@@ -76,6 +104,10 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       '/demo/ranked': () => startDemo('ranked'),
       '/demo/aram': () => startDemo('aram'),
       '/demo/stop': () => stopDemo(),
+      '/demo/next': () => {
+        demo?.resume?.();
+        return {};
+      },
     },
   });
   const changed = () => {
@@ -86,7 +118,8 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   const advise = () => {
     if (!state.draft) return;
     try {
-      state.advice = recommend(state.draft, { stats, profile, champions: state.champions, pickable, owned, info });
+      const who = demo ? profile ?? SAMPLE_PROFILE : profile;
+      state.advice = recommend(state.draft, { stats, profile: who, champions: state.champions, pickable, owned, info });
     } catch (e) {
       onLog(`Erreur de calcul : ${e.message}`);
       state.advice = { options: [], note: 'Conseil indisponible pour ce moment de la draft.' };
@@ -96,6 +129,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   const stopDemo = () => {
     if (!demo) return {};
     demo.cancelled = true;
+    demo.resume?.();
     demo = null;
     Object.assign(state, { demo: null, draft: null, advice: null, queue: null, status: client ? 'connected' : 'no-client' });
     lastDraftKey = '';
@@ -105,11 +139,14 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
 
   const startDemo = async (name) => {
     if (state.status === 'champ-select' && !demo) return { error: 'Une vraie sélection est en cours.' };
-    if (demo) demo.cancelled = true;
-    const run = (demo = { name, cancelled: false });
+    if (demo) {
+      demo.cancelled = true;
+      demo.resume?.();
+    }
+    const run = (demo = { name, cancelled: false, resume: null });
     const spec = DEMOS[name];
     const fixture = JSON.parse(await readFile(new URL(`../test/fixtures/real/${spec.file}`, import.meta.url), 'utf8'));
-    Object.assign(state, { demo: { name, profile: Boolean(profile) }, queue: spec.queue, status: 'champ-select' });
+    Object.assign(state, { demo: { name, profile: profile ? 'real' : 'sample', caption: null }, queue: spec.queue, status: 'champ-select' });
     lastDraftKey = '';
     (async () => {
       let prev = fixture.events[0].t;
@@ -117,10 +154,21 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
         await new Promise((r) => setTimeout(r, Math.min(4000, Math.max(300, (e.t - prev) / DEMO_SPEED))));
         prev = e.t;
         if (run.cancelled) return;
+        const prevDraft = state.draft;
         state.draft = draftState(e.session, { gameMode: spec.queue.gameMode });
         if (state.draft.timeLeftMs != null) state.draft.timeLeftMs /= DEMO_SPEED;
         if (state.draft.phaseTotalMs != null) state.draft.phaseTotalMs /= DEMO_SPEED;
         advise();
+        const moment = keyMoment(prevDraft, state.draft);
+        if (moment) {
+          // Freeze the timer while the viewer reads.
+          state.draft.timeLeftMs = null;
+          state.demo = { ...state.demo, caption: CAPTIONS[moment] };
+          changed();
+          await new Promise((r) => (run.resume = r));
+          if (run.cancelled) return;
+          state.demo = { ...state.demo, caption: null };
+        }
         changed();
       }
       await new Promise((r) => setTimeout(r, 8000));

@@ -142,3 +142,13 @@ button:hover { border-color: var(--gold); }
 .demo-bar button { padding: 6px 10px; font-size: 13px; }
 .abs div + div { margin-top: 3px; }
 .abs b { color: var(--text); }
+
+/* One gauge per card, same scale for all: 50 % marked, best option in the accent colour */
+.gauge { grid-column: 2 / -1; position: relative; height: 6px; border-radius: 6px; background: var(--line-2); margin-top: 6px; overflow: hidden; }
+.gauge .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px; background: var(--muted); opacity: 0.55; transition: width 0.4s var(--ease); }
+.gauge.best .fill { background: var(--pos); opacity: 1; }
+.gauge .range { position: absolute; top: 0; bottom: 0; background: var(--text); opacity: 0.12; }
+.gauge .mid { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text); opacity: 0.7; }
+.legend { font-size: 12px; color: var(--faint); padding: 0 4px; line-height: 1.4; }
+.demo-bar.step { background: var(--surface-2); color: var(--text); font-weight: 500; line-height: 1.35; align-items: center; }
+.demo-bar.step button { background: var(--gold); color: #1a1408; border-color: var(--gold); flex: none; }
