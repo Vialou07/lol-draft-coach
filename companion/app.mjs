@@ -41,6 +41,7 @@ const LIVE_POLL_MS = 3000;
 const BUILD_RETRY_MS = 30000;
 const IN_GAME = ['ChampSelect', 'GameStart', 'InProgress', 'Reconnect'];
 const AFTER_GAME = ['WaitingForStats', 'PreEndOfGame', 'EndOfGame'];
+const CATCH_UP_MS = 5 * 60 * 1000;
 const MAYHEM = new Set([2400, 2401, 2403, 2405]);
 const RECORD_EVERY = 15; // seconds of game time between two reads kept in live-last.jsonl
 const RECAP_TRIES = 12; // the client files the game a few seconds after the end
@@ -377,6 +378,19 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     changed();
   };
 
+  // The client files a game in its history a few minutes after the end: look again from time to
+  // time, so the evening and the last recap catch up on their own.
+  const catchUp = async (c) => {
+    await refreshProfile(c, { quiet: true });
+    await backfillEvening(c);
+    const last = profile?.recent?.[0];
+    if (last?.gameId && last.at > (state.recap?.at ?? 0) && Date.now() - last.at < LAST_RECAP_MS && state.status !== 'champ-select') await fetchRecap(c, last.gameId);
+  };
+  const catchUpTimer = setInterval(() => {
+    if (client && state.status === 'connected' && !IN_GAME.includes(state.gameflow)) catchUp(client).catch(() => {});
+  }, CATCH_UP_MS);
+  catchUpTimer.unref?.();
+
   const startRecapDemo = async () => {
     if (state.status === 'champ-select' || IN_GAME.includes(state.gameflow)) return { error: 'Une partie est en cours.' };
     const detail = JSON.parse(await readAsset('test/fixtures/game-detail-galio.json'));
@@ -587,13 +601,15 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     changed();
   };
 
-  const refreshProfile = async (client) => {
+  const refreshProfile = async (client, { quiet = false } = {}) => {
+    const before = profile?.gamesRead;
     profile = await buildProfile(client).catch((e) => {
       onLog(`Profil indisponible : ${e.message}`);
       return profile;
     });
     if (profile) {
       state.profileSummary = profileSummary(profile);
+      if (quiet && profile.gamesRead === before) return;
       const pairs = Object.values(profile.matchups ?? {}).reduce((s, l) => s + Object.keys(l).length, 0);
       onLog(`Matchups perso : ${pairs} vis-à-vis lus dans l'historique`);
       const known = Object.values(profile.champions).filter((c) => c.games || c.mastery).length;
@@ -770,6 +786,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       ws?.terminate();
       clearTimeout(liveTimer);
       clearTimeout(updateTimer);
+      clearInterval(catchUpTimer);
       await relay?.stop();
       await server.close();
     },
