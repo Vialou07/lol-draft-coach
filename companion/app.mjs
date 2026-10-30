@@ -4,7 +4,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { findClient, get, getBinary, tryGet, subscribe, TOPICS } from './lcu.mjs';
 import { draftState, draftKey } from './draft.mjs';
 import { startServer } from './server.mjs';
-import { buildProfile } from './profile.mjs';
+import { buildProfile, profileSummary } from './profile.mjs';
 import { recommend } from './recommend.mjs';
 import { loadDraftStats } from './stats-draft.mjs';
 import { loadMayhemStats } from './stats-aram.mjs';
@@ -13,6 +13,7 @@ import { loadAttributes } from './static-attrs.mjs';
 import { loadEloStats, TIER_SLUGS, DEFAULT_TIER } from './stats-elo.mjs';
 import { loadGroup, groupLink, playerIdFor, startRelay } from './relay.mjs';
 import { assignBench } from './team.mjs';
+import { dataFile } from './paths.mjs';
 import { readLiveGame } from './live.mjs';
 import { adviseBuild, championKeyOf } from './advise-build.mjs';
 import { loadBuild, RANK_CODES, DEFAULT_RANK } from './stats-builds.mjs';
@@ -20,7 +21,6 @@ import { loadItems } from './items.mjs';
 import { createDraftModel } from './model-draft.mjs';
 
 const RETRY_MS = 3000;
-const SETTINGS = new URL('../data/local/settings.json', import.meta.url);
 // Demos replay real recorded champ selects (anonymised fixtures) so the page can be seen
 // without starting a game.
 const DEMOS = {
@@ -85,7 +85,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     advice: null,
     champions: {},
     assets: { ddragon: await latestDdragon() },
-    settings: await readFile(SETTINGS, 'utf8').then(JSON.parse).catch(() => ({ learning: [] })),
+    settings: await readFile(dataFile('settings.json'), 'utf8').then(JSON.parse).catch(() => ({ learning: [] })),
     updatedAt: 0,
   };
   let client = null;
@@ -134,8 +134,8 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       '/settings': async (input) => {
         const learning = Array.isArray(input?.learning) ? [...new Set(input.learning.map(Number).filter((id) => id > 0))].slice(0, 12) : state.settings.learning;
         state.settings = { ...state.settings, learning };
-        await mkdir(new URL('./', SETTINGS), { recursive: true });
-        await writeFile(SETTINGS, JSON.stringify(state.settings, null, 2));
+        await mkdir(dataFile(), { recursive: true });
+        await writeFile(dataFile('settings.json'), JSON.stringify(state.settings, null, 2));
         advise();
         changed();
         return state.settings;
@@ -423,6 +423,9 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       return profile;
     });
     if (profile) {
+      state.profileSummary = profileSummary(profile);
+      const pairs = Object.values(profile.matchups ?? {}).reduce((s, l) => s + Object.keys(l).length, 0);
+      onLog(`Matchups perso : ${pairs} vis-à-vis lus dans l'historique`);
       const known = Object.values(profile.champions).filter((c) => c.games || c.mastery).length;
       onLog(`Profil : ${profile.gamesRead} parties lues, ${known} champions connus, rang ${profile.rank ? `${profile.rank.tier} ${profile.rank.division}` : 'aucun'}`);
     }

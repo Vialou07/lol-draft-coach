@@ -31,7 +31,7 @@ export async function startFakeClient({ fixture, lockfile, speed = 20, minGapMs 
 
   const routes = {
     '/lol-game-data/assets/v1/champion-summary.json': () => summary,
-    '/lol-summoner/v1/current-summoner': () => ({ gameName: 'Testeur', tagLine: 'EUW' }),
+    '/lol-summoner/v1/current-summoner': () => ({ gameName: 'Testeur', tagLine: 'EUW', puuid: 'fake-puuid' }),
     '/lol-gameflow/v1/gameflow-phase': () => phase,
     '/lol-gameflow/v1/session': () => ({ phase, gameData: { queue: { id: fixture.queueId, ...QUEUES[fixture.queueId] } } }),
     '/lol-champ-select/v1/session': () => session,
@@ -47,6 +47,20 @@ export async function startFakeClient({ fixture, lockfile, speed = 20, minGapMs 
     if (path === '/lol-match-history/v1/products/lol/current-summoner/matches') {
       const beg = Number(new URL(req.url, 'https://x').searchParams.get('begIndex'));
       return res.writeHead(200).end(JSON.stringify({ games: { games: profile.games.slice(beg, beg + 20) } }));
+    }
+    const gameId = path.match(/^\/lol-match-history\/v1\/games\/(\d+)$/)?.[1];
+    if (gameId) {
+      const g = profile.games.find((x) => String(x.gameId) === gameId);
+      if (!g) return res.writeHead(404).end('{}');
+      const me = g.participants[0];
+      return res.writeHead(200).end(JSON.stringify({
+        gameId: g.gameId,
+        participantIdentities: [{ participantId: 1, player: { puuid: 'fake-puuid' } }, { participantId: 6, player: { puuid: 'other' } }],
+        participants: [
+          { participantId: 1, teamId: 100, championId: me.championId, stats: me.stats, timeline: { lane: 'BOTTOM', role: 'DUO_SUPPORT' } },
+          { participantId: 6, teamId: 200, championId: g.opponent ?? 412, stats: { win: !me.stats.win }, timeline: { lane: 'BOTTOM', role: 'DUO_SUPPORT' } },
+        ],
+      }));
     }
     const body = routes[path]?.();
     if (body == null) return res.writeHead(404).end('{}');
@@ -117,6 +131,7 @@ function defaultProfile() {
     games: Array.from({ length: 45 }, (_, i) => ({
       gameId: 1000 + i,
       queueId: i % 3 ? 2400 : 420,
+      opponent: [412, 89, 117][i % 3],
       participants: [{ championId: [893, 120, 22][i % 3], stats: { win: i % 2 === 0 } }],
     })),
   };

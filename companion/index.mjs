@@ -4,16 +4,16 @@ import { exec } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { startCompanion } from './app.mjs';
 import { lanUrls } from './server.mjs';
+import { dataFile } from './paths.mjs';
 
 // Windows can reserve or block a port: try a few before giving up.
 const PORTS = process.env.PORT ? [Number(process.env.PORT)] : [4317, 4327, 4337, 4347, 4357];
 const time = () => new Date().toLocaleTimeString('fr-FR');
-const LOG_DIR = new URL('../data/local/', import.meta.url);
-mkdirSync(LOG_DIR, { recursive: true });
+mkdirSync(dataFile(), { recursive: true });
 const log = (m) => {
   console.log(`[${time()}] ${m}`);
   try {
-    appendFileSync(new URL('companion.log', LOG_DIR), `${new Date().toISOString()} ${m}\n`);
+    appendFileSync(dataFile('companion.log'), `${new Date().toISOString()} ${m}\n`);
   } catch {
     // logging must never stop the app
   }

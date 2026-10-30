@@ -2,8 +2,8 @@
 // items, items 4 to 6 and skill order, with games and wins. Fetched on demand, cached 12 hours.
 
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
+import { dataFile } from './paths.mjs';
 
-const DIR = new URL('../data/local/builds/', import.meta.url);
 const MAX_AGE_MS = 12 * 3600 * 1000;
 const WORLD = '12';
 
@@ -43,7 +43,7 @@ export async function loadBuild(key, { queue = 'ranked_solo_5x5', role = '', ran
   const patches = [`${major}_${minor}`, `${major}_${Number(minor) - 1}`];
   const roleCode = queue === 'normal_aram' ? '6' : ROLE_CODES[role] ?? '';
   const rankCode = queue === 'normal_aram' ? '8' : rank;
-  const file = new URL(`${queue}-${key}-${rankCode}-${roleCode || 'any'}.json`, DIR);
+  const file = dataFile('builds', `${queue}-${key}-${rankCode}-${roleCode || 'any'}.json`);
   try {
     if (Date.now() - (await stat(file)).mtimeMs < MAX_AGE_MS) return JSON.parse(await readFile(file, 'utf8'));
   } catch {
@@ -57,7 +57,7 @@ export async function loadBuild(key, { queue = 'ranked_solo_5x5', role = '', ran
       if (!build) continue;
       build.queue = queue;
       build.patch = patch;
-      await mkdir(DIR, { recursive: true });
+      await mkdir(dataFile('builds'), { recursive: true });
       await writeFile(file, JSON.stringify(build));
       return build;
     } catch {

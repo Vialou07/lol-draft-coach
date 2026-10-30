@@ -3,9 +3,11 @@
 // official alternative. Cached on disk for 12 hours.
 
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { dataFile } from './paths.mjs';
 
 const ENDPOINT = 'https://arammayhem.com/mcp';
-const CACHE = new URL('../data/local/aram-mayhem.json', import.meta.url);
+const cacheFile = () => dataFile('aram-mayhem.json');
 const MAX_AGE_MS = 12 * 3600 * 1000;
 const PAGE = 30;
 
@@ -46,8 +48,8 @@ export async function fetchMayhemStats(keyById) {
 export async function loadMayhemStats(keyById, { onLog = () => {} } = {}) {
   let cached = null;
   try {
-    const age = Date.now() - (await stat(CACHE)).mtimeMs;
-    cached = JSON.parse(await readFile(CACHE, 'utf8'));
+    const age = Date.now() - (await stat(cacheFile())).mtimeMs;
+    cached = JSON.parse(await readFile(cacheFile(), 'utf8'));
     if (age < MAX_AGE_MS) return cached;
   } catch {
     // no cache yet
@@ -55,8 +57,8 @@ export async function loadMayhemStats(keyById, { onLog = () => {} } = {}) {
   try {
     const stats = await fetchMayhemStats(keyById);
     if (Object.keys(stats.champs).length < 100) throw new Error(`seulement ${Object.keys(stats.champs).length} champions`);
-    await mkdir(new URL('./', CACHE), { recursive: true });
-    await writeFile(CACHE, JSON.stringify(stats));
+    await mkdir(dirname(cacheFile()), { recursive: true });
+    await writeFile(cacheFile(), JSON.stringify(stats));
     return stats;
   } catch (e) {
     onLog(`Stats ARAM du Chaos indisponibles (${e.message})${cached ? ', on garde la version précédente' : ''}.`);

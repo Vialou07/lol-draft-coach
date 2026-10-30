@@ -225,3 +225,6 @@ button:hover { border-color: var(--gold); }
 .mini-item { width: 26px; height: 26px; border-radius: 7px; flex: none; }
 .skills { font-family: var(--disp); font-size: 18px; letter-spacing: 0.02em; }
 .abody > .dmg { flex: 1; min-width: 90px; }
+
+/* Your profile */
+.pair { display: inline-flex; align-items: center; gap: 5px; margin-right: 10px; }

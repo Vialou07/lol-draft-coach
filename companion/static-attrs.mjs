@@ -2,9 +2,9 @@
 // and tags such as Initiator or Ally Protection, to read engage, peel and frontline.
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { dataFile } from './paths.mjs';
 
 const BASE = 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champions/';
-const DIR = new URL('../data/local/', import.meta.url);
 const PARALLEL = 8;
 
 export const isEngage = (a) => Boolean(a?.tags?.includes('Initiator'));
@@ -25,7 +25,7 @@ function attributes(c) {
 }
 
 export async function loadAttributes(keys, version) {
-  const file = new URL(`attrs-${version}.json`, DIR);
+  const file = dataFile(`attrs-${version}.json`);
   let known = {};
   try {
     known = JSON.parse(await readFile(file, 'utf8'));
@@ -46,7 +46,7 @@ export async function loadAttributes(keys, version) {
       }),
     );
   }
-  await mkdir(DIR, { recursive: true });
+  await mkdir(dataFile(), { recursive: true });
   await writeFile(file, JSON.stringify(known));
   return known;
 }

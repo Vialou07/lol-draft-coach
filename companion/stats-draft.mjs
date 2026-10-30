@@ -2,12 +2,14 @@
 // compacted into what the draft model needs and cached on disk for 12 hours.
 
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { dataFile } from './paths.mjs';
 
 const SOURCES = {
   month: 'https://bucket.draftgap.com/datasets/v5/30-days.json',
   patch: 'https://bucket.draftgap.com/datasets/v5/current-patch.json',
 };
-const CACHE = new URL('../data/local/draft-stats.json', import.meta.url);
+const cacheFile = () => dataFile('draft-stats.json');
 const MAX_AGE_MS = 12 * 3600 * 1000;
 const MIN_PAIR_GAMES = 30;
 const SCHEMA = 2; // bump when compact() changes, so old caches are rebuilt
@@ -67,8 +69,8 @@ async function fetchJson(url) {
 export async function loadDraftStats({ onLog = () => {} } = {}) {
   let cached = null;
   try {
-    const age = Date.now() - (await stat(CACHE)).mtimeMs;
-    cached = JSON.parse(await readFile(CACHE, 'utf8'));
+    const age = Date.now() - (await stat(cacheFile())).mtimeMs;
+    cached = JSON.parse(await readFile(cacheFile(), 'utf8'));
     if (cached.schema !== SCHEMA) cached = null;
     else if (age < MAX_AGE_MS) return cached;
   } catch {
@@ -78,8 +80,8 @@ export async function loadDraftStats({ onLog = () => {} } = {}) {
     onLog('Téléchargement des stats de draft (environ 55 Mo)...');
     const [month, patch] = await Promise.all([fetchJson(SOURCES.month), fetchJson(SOURCES.patch)]);
     const stats = compact(month, patch);
-    await mkdir(new URL('./', CACHE), { recursive: true });
-    await writeFile(CACHE, JSON.stringify(stats));
+    await mkdir(dirname(cacheFile()), { recursive: true });
+    await writeFile(cacheFile(), JSON.stringify(stats));
     onLog(`Stats de draft à jour (patch ${stats.version}).`);
     return stats;
   } catch (e) {

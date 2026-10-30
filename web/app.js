@@ -125,7 +125,24 @@ function renderWaiting() {
       <form class="add" data-learn-form><input list="champ-names" name="champ" placeholder="Ajouter un champion" autocomplete="off"><button>Ajouter</button></form>
       <datalist id="champ-names">${names.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
     </section>`;
-  return `<section class="wait">${body}</section>${who}${demo}${learn}${qr}<p class="legal">${LEGAL}</p>`;
+  return `<section class="wait">${body}</section>${who}${renderProfile()}${demo}${learn}${qr}<p class="legal">${LEGAL}</p>`;
+}
+
+// Your own record, as it is: counts, not percentages, so small samples look small.
+function renderProfile() {
+  const p = state?.profileSummary;
+  if (!p || (!p.comfort.length && !p.aram.length)) return '';
+  const record = (r) => `<span class="small">${r.wins} V · ${r.games - r.wins} D</span>`;
+  const champs = (list) => list.map((c) => `<span class="duo">${mini(c.championId)}${record(c)}</span>`).join('');
+  const pairs = (list) => list.map((m) => `<div class="pair">${mini(m.championId)}<span class="small muted">vs</span>${mini(m.vs)}${record(m)}</div>`).join('');
+  const rows = [
+    p.comfort.length ? `<div class="arow"><span class="alabel">Tes champions</span><div class="abody">${champs(p.comfort)}</div></div>` : '',
+    p.favorable.length ? `<div class="arow"><span class="alabel">Bons matchups</span><div class="abody">${pairs(p.favorable)}</div></div>` : '',
+    p.hard.length ? `<div class="arow"><span class="alabel">Matchups durs</span><div class="abody">${pairs(p.hard)}</div></div>` : '',
+    p.aram.length ? `<div class="arow"><span class="alabel">ARAM du Chaos</span><div class="abody">${champs(p.aram)}</div></div>` : '',
+  ].join('');
+  return `<section class="tile"><div class="tile-title">Ton profil</div><p>Sur tes ${p.gamesRead} dernières parties${p.rank ? ` · ${esc(p.rank.tier)} ${esc(p.rank.division)}` : ''}. Peu de parties = simple tendance.</p></section>
+    <section class="analysis">${rows}</section>`;
 }
 
 function pic(id, { hover = false, me = false, empty = false } = {}) {
@@ -227,7 +244,7 @@ function renderAnalysis(an) {
   const rows = [];
   if (an.lane) {
     rows.push(row('Ta lane', an.lane.opponentId
-      ? `${mini(an.lane.opponentId)}<span class="aname">${esc(champName(an.lane.opponentId))}</span>${verdict(an.lane.delta)}<span class="muted small">${an.lane.games.toLocaleString('fr-FR')} parties</span>`
+      ? `${mini(an.lane.opponentId)}<span class="aname">${esc(champName(an.lane.opponentId))}</span>${verdict(an.lane.delta)}<span class="muted small">${an.lane.games.toLocaleString('fr-FR')} parties</span>${an.lane.personal ? `<span class="small">toi : ${an.lane.personal.wins} V · ${an.lane.personal.games - an.lane.personal.wins} D</span>` : ''}`
       : `<span class="muted">Ton vis-à-vis n'a pas encore choisi${an.lane.worst ? ` · pire cas ${esc(an.lane.worst.name)} ${pts(an.lane.worst.delta)}` : ''}</span>`));
   }
   if (an.others?.length) {
@@ -468,7 +485,7 @@ function onState(next) {
     deadline = null;
   }
   if (!d) opened.clear();
-  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name), state.settings, state.game]);
+  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name), state.settings, state.game, state.profileSummary]);
   if (key !== lastKey) {
     lastKey = key;
     render();

@@ -3,8 +3,8 @@
 // each champion's meta strength towards what it does at your elo.
 
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
+import { dataFile } from './paths.mjs';
 
-const DIR = new URL('../data/local/', import.meta.url);
 const MAX_AGE_MS = 12 * 3600 * 1000;
 const ROLES = { top: 0, jungle: 1, mid: 2, adc: 3, supp: 4 };
 
@@ -41,7 +41,7 @@ export function compactElo(raw, tier, patch) {
 export async function loadEloStats(tier, version, { onLog = () => {} } = {}) {
   const [major, minor] = String(version).split('.');
   const patches = [`${major}_${minor}`, `${major}_${Number(minor) - 1}`]; // patch day: yesterday's file
-  const cache = new URL(`elo-${tier}.json`, DIR);
+  const cache = dataFile(`elo-${tier}.json`);
   let cached = null;
   try {
     cached = JSON.parse(await readFile(cache, 'utf8'));
@@ -55,7 +55,7 @@ export async function loadEloStats(tier, version, { onLog = () => {} } = {}) {
       if (!res.ok) continue;
       const stats = compactElo(await res.json(), tier, patch);
       if (Object.keys(stats.champs).length < 100) continue;
-      await mkdir(DIR, { recursive: true });
+      await mkdir(dataFile(), { recursive: true });
       await writeFile(cache, JSON.stringify(stats));
       return stats;
     } catch {

@@ -1,8 +1,8 @@
 // Static champion data from Data Dragon (difficulty, classes), cached per patch.
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { dataFile } from './paths.mjs';
 
-const DIR = new URL('../data/local/', import.meta.url);
 
 export function championInfo(ddragon) {
   return Object.fromEntries(
@@ -11,7 +11,7 @@ export function championInfo(ddragon) {
 }
 
 export async function loadChampionInfo(version) {
-  const file = new URL(`ddragon-${version}.json`, DIR);
+  const file = dataFile(`ddragon-${version}.json`);
   try {
     return championInfo(JSON.parse(await readFile(file, 'utf8')));
   } catch {
@@ -20,7 +20,7 @@ export async function loadChampionInfo(version) {
   try {
     const res = await fetch(`https://ddragon.leagueoflegends.com/cdn/${version}/data/fr_FR/champion.json`, { signal: AbortSignal.timeout(15000) });
     const body = await res.text();
-    await mkdir(DIR, { recursive: true });
+    await mkdir(dataFile(), { recursive: true });
     await writeFile(file, body);
     return championInfo(JSON.parse(body));
   } catch {

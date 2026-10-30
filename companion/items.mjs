@@ -1,8 +1,7 @@
 // Items from Data Dragon (French names, prices, recipes, tags), cached per patch.
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-
-const DIR = new URL('../data/local/', import.meta.url);
+import { dataFile } from './paths.mjs';
 
 export function compactItems(raw) {
   const items = {};
@@ -19,7 +18,7 @@ export function compactItems(raw) {
 }
 
 export async function loadItems(version) {
-  const file = new URL(`items-${version}.json`, DIR);
+  const file = dataFile(`items-${version}.json`);
   try {
     return JSON.parse(await readFile(file, 'utf8'));
   } catch {
@@ -28,7 +27,7 @@ export async function loadItems(version) {
   try {
     const res = await fetch(`https://ddragon.leagueoflegends.com/cdn/${version}/data/fr_FR/item.json`, { signal: AbortSignal.timeout(15000) });
     const items = compactItems(await res.json());
-    await mkdir(DIR, { recursive: true });
+    await mkdir(dataFile(), { recursive: true });
     await writeFile(file, JSON.stringify(items));
     return items;
   } catch {

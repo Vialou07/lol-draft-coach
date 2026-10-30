@@ -116,7 +116,7 @@ export function recommendDraft(draft, { stats, model, profile, pickable, names =
 
 // Full read of the draft around one champion: its lane, its other matchups, its duos, and
 // both teams' damage mix, tanks and strength by game length. Values are in points (fraction).
-function analyze({ model, allies, enemies, assignments }, s) {
+function analyze({ model, allies, enemies, assignments, profile }, s) {
   const pt = (v) => toPoints(v, s.p) / 100;
   const laneOdds = {};
   let laneKnown = 0;
@@ -135,7 +135,8 @@ function analyze({ model, allies, enemies, assignments }, s) {
   const lane = opponent && laneKnown >= 0.5
     ? (() => {
         const m = model.matchup(s.key, s.r, opponent, s.r);
-        return { opponentId: Number(opponent), certainty, delta: pt(m.value), games: Math.round(m.games) };
+        const personal = profile?.matchups?.[s.key]?.[opponent] ?? null;
+        return { opponentId: Number(opponent), certainty, delta: pt(m.value), games: Math.round(m.games), personal };
       })()
     : { opponentId: null, worst: s.worst ? { name: s.worst.name, delta: s.worst.pts / 100 } : null };
 

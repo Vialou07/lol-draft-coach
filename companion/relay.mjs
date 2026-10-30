@@ -5,11 +5,11 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import mqtt from 'mqtt';
+import { dataFile } from './paths.mjs';
 import { importKey, encode, toB64url } from '../web/codec.js';
 
 export const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
 export const PAGE_URL = 'https://vialou07.github.io/lol-draft-coach/';
-const GROUP_FILE = new URL('../data/local/group.json', import.meta.url);
 const MIN_GAP_MS = 600;
 const HEARTBEAT_MS = 15000;
 
@@ -18,13 +18,26 @@ export const topicFor = (group, player) => `ldc1/${group}/p/${player}`;
 // The group is created once on this PC; its link is what friends open on their phone.
 export async function loadGroup() {
   try {
-    return JSON.parse(await readFile(GROUP_FILE, 'utf8'));
+    return JSON.parse(await readFile(dataFile('group.json'), 'utf8'));
   } catch {
     const group = { id: randomBytes(9).toString('hex'), key: toB64url(randomBytes(32)), createdAt: new Date().toISOString() };
-    await mkdir(new URL('./', GROUP_FILE), { recursive: true });
-    await writeFile(GROUP_FILE, JSON.stringify(group, null, 2));
+    await saveGroup(group);
     return group;
   }
+}
+
+export async function saveGroup(group) {
+  await mkdir(dataFile(), { recursive: true });
+  await writeFile(dataFile('group.json'), JSON.stringify(group, null, 2));
+}
+
+// Joining a friend's group: the link carries the group id and key.
+export function parseGroupLink(link) {
+  const hash = String(link).split('#')[1] ?? '';
+  const params = new URLSearchParams(hash);
+  const id = params.get('g');
+  const key = params.get('k');
+  return id && key && /^[0-9a-f]{8,64}$/.test(id) && /^[A-Za-z0-9_-]{40,}$/.test(key) ? { id, key } : null;
 }
 
 export const groupLink = (group) => `${PAGE_URL}#g=${group.id}&k=${group.key}`;

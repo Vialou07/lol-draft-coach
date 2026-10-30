@@ -7,6 +7,9 @@ import { join } from 'node:path';
 import WebSocket from 'ws';
 import { startFakeClient, loadFixture } from './fake-client.mjs';
 import { startCompanion as start } from '../companion/app.mjs';
+import { mkdtempSync } from 'node:fs';
+
+process.env.LDC_DATA_DIR = mkdtempSync(join(tmpdir(), 'ldc-test-'));
 import { readFileSync } from 'node:fs';
 import { championInfo } from '../companion/static-data.mjs';
 
@@ -58,6 +61,9 @@ test('ranked solo: the page receives the live draft, then the end of champ selec
     assert.equal(r.states.at(-1).draft, null);
     assert.equal(r.states.at(-1).summoner?.gameName, 'Testeur');
     assert.ok(Object.keys(r.states.at(-1).champions).length > 150);
+    const summary = r.states.at(-1).profileSummary;
+    assert.ok(summary?.comfort?.length, 'comfort picks from the history');
+    assert.ok(summary.favorable.length + summary.hard.length > 0, 'lane matchups from game details');
     const withAdvice = drafts.filter((s) => s.advice?.options?.length);
     assert.ok(withAdvice.length > 0, 'advice reached the page');
     assert.ok(withAdvice.some((s) => s.advice.verb === 'À toi'), 'pick advice during my turn');
