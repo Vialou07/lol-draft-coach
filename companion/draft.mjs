@@ -3,7 +3,7 @@
 // is locked: in-progress enemy actions can carry the enemy's hover, which the game hides.
 
 const ROLES = { top: 'top', jungle: 'jungle', middle: 'mid', bottom: 'bot', utility: 'support' };
-const ARENA_QUEUES = new Set([1700, 1710, 1750]);
+const ARENA_QUEUES = new Set([1700, 1710, 1740, 1750]);
 
 export function gameKind(session, gameMode = '') {
   if (gameMode === 'CHERRY' || ARENA_QUEUES.has(session.queueId)) return 'arena';
