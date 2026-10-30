@@ -145,6 +145,66 @@ function card(o, { flat = false, ref = false, best = false } = {}) {
   </article>`;
 }
 
+function mini(id) {
+  return `<span class="mini">${img(id)}</span>`;
+}
+
+function verdict(delta, words = ['Favorable', 'Équilibrée', 'Difficile']) {
+  const cls = trend(delta, 1);
+  const word = cls === 'up' ? words[0] : cls === 'down' ? words[2] : words[1];
+  return `<span class="pill ${cls}">${word}${cls === 'flat' ? '' : ` ${pts(delta)}`}</span>`;
+}
+
+function damageBar(team) {
+  if (team?.physical == null) return '<span class="muted">-</span>';
+  const ad = Math.round(team.physical * 100);
+  return `<div class="dmg"><i class="ad" style="width:${ad}%"></i><i class="ap" style="width:${100 - ad}%"></i></div><span class="dmg-label">AD ${ad} % · AP ${100 - ad} %</span>`;
+}
+
+function timingVerdict(timing) {
+  const [short, , long] = timing.map((t) => t.delta * 100);
+  if (Math.max(...timing.map((t) => Math.abs(t.delta * 100))) < 1) return 'Pas de différence nette selon la durée.';
+  if (long - short >= 2) return 'Ton équipe gagne en durée : joue safe et laisse scaler.';
+  if (short - long >= 2) return 'Ton équipe est forte tôt : joue agressif avant 25 minutes.';
+  return long > 0 ? 'Léger avantage si la partie dure.' : 'Léger avantage si la partie est courte.';
+}
+
+// The full read of the draft around the champion in focus: lane, other matchups, duos,
+// then both teams (damage, tanks, game length) and the overall win chance.
+function renderAnalysis(an) {
+  if (!an) return '';
+  const row = (label, body) => `<div class="arow"><span class="alabel">${label}</span><div class="abody">${body}</div></div>`;
+  const rows = [];
+  if (an.lane) {
+    rows.push(row('Ta lane', an.lane.opponentId
+      ? `${mini(an.lane.opponentId)}<span class="aname">${esc(champName(an.lane.opponentId))}</span>${verdict(an.lane.delta)}<span class="muted small">${an.lane.games.toLocaleString('fr-FR')} parties</span>`
+      : `<span class="muted">Ton vis-à-vis n'a pas encore choisi${an.lane.worst ? ` · pire cas ${esc(an.lane.worst.name)} ${pts(an.lane.worst.delta)}` : ''}</span>`));
+  }
+  if (an.others?.length) {
+    rows.push(row('Les autres', an.others.map((o) => `<span class="duo">${mini(o.championId)}<b class="${trend(o.delta, 0.5)}">${pts(o.delta)}</b></span>`).join('')));
+  }
+  if (an.duos?.length) {
+    rows.push(row('Tes duos', an.duos.map((o) => `<span class="duo">${mini(o.championId)}<b class="${trend(o.delta, 0.5)}">${pts(o.delta)}</b></span>`).join('')));
+  }
+  const { us, them } = an.teams ?? {};
+  if (us) {
+    rows.push(row('Dégâts', `<div class="teams"><div><span class="tname">Nous</span>${damageBar(us)}</div>${them ? `<div><span class="tname">Eux</span>${damageBar(them)}</div>` : ''}</div>`));
+    rows.push(row('Tanks', `<span>Nous <b>${us.tanks}</b></span>${them ? `<span class="sep">·</span><span>Eux <b>${them.tanks}</b></span>` : ''}`));
+  }
+  if (an.timing) {
+    rows.push(row('Durée', `<div class="timing">${an.timing.map((t) => `<span class="tcell"><small>${t.label}</small>${verdict(t.delta, ['Nous', '=', 'Eux']).replace('Nous ', '').replace('Eux ', '')}</span>`).join('')}</div><div class="muted small">${timingVerdict(an.timing)}</div>`));
+  }
+  if (an.overall) {
+    rows.push(row('La partie', `<span class="overall">${pct(an.overall.p)}</span><span class="muted small">chance de gagner · entre ${pct(an.overall.low)} et ${pct(an.overall.high)}</span>`));
+  }
+  const warnings = [us?.warning, them?.warning ? `Eux : ${them.warning.toLowerCase()}` : '', us && us.size >= 4 && !us.tanks ? 'Aucun tank chez nous' : '']
+    .filter(Boolean)
+    .map((w) => `<div class="warn">${esc(w)}</div>`)
+    .join('');
+  return `<div class="label"><span>Analyse de la draft</span><b>avec ${esc(champName(an.championId))}</b></div>
+    <section class="analysis">${rows.join('')}${warnings}</section>`;
+}
+
 function renderAdvice(d, a) {
   if (!a) return '';
   if (!a.options?.length) return a.note ? `<p class="note">${esc(a.note)}</p>` : '';
@@ -161,12 +221,14 @@ function renderAdvice(d, a) {
   const legend = !flat && d.myTurn !== 'ban' && a.options.some((o) => o.p != null)
     ? '<p class="legend">Ligne blanche = 50 %. Un point de plus = une victoire de plus sur 100 parties. Entre deux bons choix, l’écart est souvent de 1 à 4 points.</p>'
     : '';
-  const refCard = a.hover
+  // Your hover is shown apart only when it is not already one of the cards.
+  const hoverShown = a.hover && a.options.some((o) => o.championId === a.hover.championId);
+  const refCard = a.hover && !hoverShown
     ? `<div class="label"><span>Ton survol dans le client</span></div>${card(a.hover, { ref: true })}`
     : a.current
       ? `<div class="label"><span>Ton champion</span></div>${card(a.current, { ref: true, flat })}`
       : '';
-  return `<div class="label"><span>${title}</span><b>${esc(right)}</b></div>${cards}${legend}${refCard}${a.note ? `<p class="note">${esc(a.note)}</p>` : ''}`;
+  return `<div class="label"><span>${title}</span><b>${esc(right)}</b></div>${cards}${legend}${refCard}${renderAnalysis(a.analysis)}${a.note ? `<p class="note">${esc(a.note)}</p>` : ''}`;
 }
 
 function render() {

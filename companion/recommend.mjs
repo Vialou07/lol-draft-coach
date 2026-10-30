@@ -14,7 +14,7 @@ export function recommend(draft, { stats = {}, profile, champions = {}, pickable
     if (!stats.draft) return { options: [], note: 'Chargement des stats de draft...' };
     if (draftCache.stats !== stats.draft) {
       const difficulty = Object.fromEntries(Object.entries(info).map(([k, v]) => [k, v.difficulty]));
-      draftCache = { stats: stats.draft, model: createDraftModel(stats.draft, { difficulty }) };
+      draftCache = { stats: stats.draft, model: createDraftModel(stats.draft, { difficulty, info }) };
     }
     return recommendDraft(draft, { stats: stats.draft, model: draftCache.model, profile, pickable, names });
   }

@@ -155,3 +155,16 @@ test('ARAM: an ownership list that would hide the whole bench is ignored', () =>
   const advice = recommend(draft, { stats, profile: {}, champions, info, owned: [me.championId] });
   assert.ok(advice.options.length > 0, 'bench still shown');
 });
+
+test('draft analysis: lane opponent, both teams and game length are read around my champion', () => {
+  const g = ranked.find((x) => x.file === 'q420-2026-10-24-03.json');
+  const { advice } = advise(g.events.at(-1).session);
+  const an = advice.analysis;
+  assert.ok(an, 'analysis present after lock');
+  assert.ok(an.lane.opponentId > 0, 'lane opponent identified once enemies are locked');
+  assert.equal(an.teams.us.size, 5);
+  assert.equal(an.teams.them.size, 5);
+  assert.ok(an.teams.us.physical > 0 && an.teams.us.physical < 1);
+  assert.equal(an.timing.length, 3);
+  assert.ok(an.overall.low <= an.overall.p && an.overall.p <= an.overall.high);
+});

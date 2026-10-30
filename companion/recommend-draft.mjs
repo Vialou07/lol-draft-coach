@@ -7,7 +7,8 @@ import { ROLE_INDEX, sigmoid, logit, toPoints } from './model-draft.mjs';
 const MIN_ROLE_SHARE = 0.03;
 const META_FILL = 5; // meta champions added to the player's pool as outside options
 const SHOWN = 3;
-const LABELS = { meta: 'Méta', lane: 'Lane', cross: 'Matchups', syn: 'Duo', comp: 'Compo', mastery: 'Confort' };
+const LABELS = { meta: 'Méta', lane: 'Lane', cross: 'Matchups', syn: 'Duo', comp: 'Compo', front: 'Tank', mastery: 'Confort' };
+const GROUPS = ['Courte', 'Moyenne', 'Longue'];
 
 const phi = (z) => 0.5 * (1 + Math.tanh(0.7978845608 * (z + 0.044715 * z ** 3))); // normal CDF
 
@@ -34,7 +35,7 @@ export function recommendDraft(draft, { stats, model, profile, pickable, names =
 
   if (me.championId) {
     const locked = scoreCandidate(ctx, base, { key: String(me.championId), r: roleOf(String(me.championId)) });
-    return { verb: 'Verrouillé', options: [option(locked, null)], reference: null, enemyRoles, note: sourceNote(stats) };
+    return { verb: 'Verrouillé', options: [option(locked, null)], reference: null, enemyRoles, analysis: analyze(ctx, locked), note: sourceNote(stats) };
   }
 
   const owned = pickable?.length ? new Set(pickable.map(String)) : null;
@@ -77,7 +78,76 @@ export function recommendDraft(draft, { stats, model, profile, pickable, names =
     allClose: shown.length > 1 && shown.slice(1).every((s) => s.close),
     hover: hover ? option(hover, reference) : null,
     enemyRoles,
+    // The full draft analysis follows what you are looking at: your hover, else the first choice.
+    analysis: analyze(ctx, hover ?? best),
     note: sourceNote(stats),
+  };
+}
+
+// Full read of the draft around one champion: its lane, its other matchups, its duos, and
+// both teams' damage mix, tanks and strength by game length. Values are in points (fraction).
+function analyze({ model, allies, enemies, assignments }, s) {
+  const pt = (v) => toPoints(v, s.p) / 100;
+  const laneOdds = {};
+  let laneKnown = 0;
+  const cross = {};
+  for (const asg of assignments) {
+    asg.roles.forEach((re, i) => {
+      if (re === s.r) {
+        laneOdds[enemies[i]] = (laneOdds[enemies[i]] ?? 0) + asg.weight;
+        laneKnown += asg.weight;
+      } else {
+        cross[enemies[i]] = (cross[enemies[i]] ?? 0) + asg.weight * model.matchup(s.key, s.r, enemies[i], re).value;
+      }
+    });
+  }
+  const [opponent, certainty] = Object.entries(laneOdds).sort((a, b) => b[1] - a[1])[0] ?? [];
+  const lane = opponent && laneKnown >= 0.5
+    ? (() => {
+        const m = model.matchup(s.key, s.r, opponent, s.r);
+        return { opponentId: Number(opponent), certainty, delta: pt(m.value), games: Math.round(m.games) };
+      })()
+    : { opponentId: null, worst: s.worst ? { name: s.worst.name, delta: s.worst.pts / 100 } : null };
+
+  const others = Object.entries(cross)
+    .map(([k, v]) => ({ championId: Number(k), delta: pt(v) }))
+    .filter((x) => Math.abs(x.delta) >= 0.005)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 3);
+  const duos = allies
+    .map((a) => {
+      const y = model.synergy(s.key, s.r, a.key, a.r);
+      return { championId: Number(a.key), delta: pt(y.value), games: Math.round(y.games) };
+    })
+    .filter((x) => Math.abs(x.delta) >= 0.003)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+  const ours = [...allies.map((a) => ({ key: a.key, r: a.r })), { key: s.key, r: s.r }];
+  const roles = likelyRoles(model, enemies, assignments);
+  const theirs = enemies.map((k, i) => ({ key: k, r: roles[i] }));
+  const team = (list) => {
+    const phys = list.map((c) => model.rec(c.key, c.r)[4]).filter((x) => x != null);
+    const time = list.reduce((acc, c) => model.timing(c.key, c.r).map((v, i) => acc[i] + v), [0, 0, 0]);
+    return {
+      size: list.length,
+      physical: phys.length ? phys.reduce((a, b) => a + b, 0) / phys.length : null,
+      tanks: list.filter((c) => model.isFront(c.key)).length,
+      warning: model.compWarning(phys),
+      time,
+    };
+  };
+  const us = team(ours);
+  const them = team(theirs);
+  const timing = GROUPS.map((label, i) => ({ label, delta: pt(us.time[i] - (theirs.length ? them.time[i] : 0)) }));
+  const half = 1.2816 * Math.sqrt(s.variance) * s.p * (1 - s.p);
+  return {
+    championId: Number(s.key),
+    lane,
+    others,
+    duos,
+    teams: { us: { ...us, time: undefined }, them: theirs.length ? { ...them, time: undefined } : null },
+    timing: theirs.length || ours.length >= 3 ? timing : null,
+    overall: { p: s.p, low: Math.max(0, s.p - half), high: Math.min(1, s.p + half) },
   };
 }
 
@@ -87,9 +157,20 @@ function mainRole(model, key) {
   return best;
 }
 
+// Most likely role of each locked enemy.
+function likelyRoles(model, enemies, assignments) {
+  const best = [...assignments].sort((a, b) => b.weight - a.weight)[0];
+  return enemies.map((k, i) => best?.roles?.[i] ?? mainRole(model, k));
+}
+
 // Everything that does not depend on our candidate: the rest of our team against theirs.
 function teamBase({ model, allies, enemies, assignments }) {
   let base = 0;
+  const allyPhys = allies.map((a) => model.rec(a.key, a.r)[4]).filter((x) => x != null);
+  base += model.compTerm(allyPhys) + model.frontTerm(allies.map((a) => a.key));
+  const roles = likelyRoles(model, enemies, assignments);
+  const enemyPhys = enemies.map((k, i) => model.rec(k, roles[i])[4]).filter((x) => x != null);
+  base -= model.compTerm(enemyPhys) + model.frontTerm(enemies);
   for (const a of allies) base += a.w * model.meta(a.key, a.r).value;
   for (let i = 0; i < allies.length; i++) {
     for (let j = i + 1; j < allies.length; j++) {
@@ -155,13 +236,17 @@ function scoreCandidate({ model, profile, allies, enemies, assignments, taken, s
   const phys = allies.map((a) => model.rec(a.key, a.r)[4]).filter((x) => x != null);
   const own = model.rec(c.key, c.r)[4];
   const compWarn = own == null ? '' : model.compWarning([...phys, own]);
+  const comp = own == null ? 0 : model.compTerm([...phys, own]) - model.compTerm(phys);
+  const keys = allies.map((a) => a.key);
+  const front = model.frontTerm([...keys, c.key]) - model.frontTerm(keys);
   const mastery = model.mastery(c.key, profile);
 
-  const terms = { meta: meta.value, lane, cross, syn, mastery: mastery.value };
+  const terms = { meta: meta.value, lane, cross, syn, comp, front, mastery: mastery.value };
   const total = Object.values(terms).reduce((s, x) => s + x, 0);
   const p = sigmoid(base + total);
   return {
     key: c.key,
+    r: c.r,
     p,
     variance: Object.values(vars).reduce((s, x) => s + x, 0),
     vars,

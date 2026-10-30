@@ -13,8 +13,12 @@ const N0_BOT_SUP = 1480; // bot against the enemy support and the reverse
 const N0_CROSS = 2500;
 const N0_SYN_BOT_SUP = 1890;
 const N0_SYN_OTHER = 5000;
-// Version 1 keeps only the terms study 07 found solid; the others wait for a backtest.
-const GAMMA = { meta: 1, lane: 1, cross: 0, syn: 0.7, comp: 1 };
+// Every pair of the draft counts (25 ally-enemy matchups, the allied duos), with prior
+// strengths measured on the data. Pairwise effects overlap, so the weights below damp the
+// off-lane terms until a backtest calibrates them.
+const GAMMA = { meta: 1, lane: 1, cross: 0.5, syn: 0.6, comp: 1 };
+const NO_FRONTLINE = -0.06; // logit, about −1.5 point for a team without any tank [assumption]
+const N0_TIME = 2000; // pseudo-games pulling a game-length winrate towards the champion's average
 const SR_QUEUES = new Set([400, 420, 430, 440, 480, 490, 700]);
 const MIN_ROLE_SHARE = 0.03;
 
@@ -22,7 +26,7 @@ const logit = (p) => Math.log(p / (1 - p));
 const sigmoid = (x) => 1 / (1 + Math.exp(-x));
 export const toPoints = (d, p = 0.5) => d * p * (1 - p) * 100;
 
-export function createDraftModel(stats, { difficulty = {} } = {}) {
+export function createDraftModel(stats, { difficulty = {}, info = {} } = {}) {
   const rec = (key, r) => stats.champs[key]?.roles?.[r] ?? [0, 0, 0, 0, null];
   const games30 = (key) => (stats.champs[key]?.roles ?? []).reduce((s, x) => s + x[0], 0);
   const share = (key, r) => {
@@ -73,7 +77,7 @@ export function createDraftModel(stats, { difficulty = {} } = {}) {
 
   function synergy(c, r, a, ra) {
     const [lo, hi] = r < ra ? [r, ra] : [ra, r];
-    if (!(lo === 3 && hi === 4)) return { value: 0, variance: 0, games: 0 }; // only bot + support in version 1
+    if (lo === 0 && hi !== 1) return { value: 0, variance: 0, games: 0 }; // top with mid/bot/support: noise (study 04)
     const n0 = lo === 3 && hi === 4 ? N0_SYN_BOT_SUP : N0_SYN_OTHER;
     const expected = sigmoid(rawLogit(c, r) + rawLogit(a, ra));
     const { g, w } = pairRecord('sy', c, r, a, ra, false);
@@ -124,14 +128,33 @@ export function createDraftModel(stats, { difficulty = {} } = {}) {
     return GAMMA.comp * (-0.8 * Math.max(0, 0.25 - s) - 0.8 * Math.max(0, s - 0.85));
   }
 
-  // Version 1 flags an unbalanced damage mix without putting a number on it (study 07).
+  const isFront = (key) => (info[key]?.tags ?? []).includes('Tank') || (info[key]?.defense ?? 0) >= 7;
+
+  // A team of four or five without any tank pays a small price.
+  function frontTerm(teamKeys) {
+    if (teamKeys.length < 4) return 0;
+    return teamKeys.some(isFront) ? 0 : NO_FRONTLINE;
+  }
+
+  // Winrate by game length, as log-odds deviations from the champion's average:
+  // [short games, medium, long]. Positive = stronger when the game lasts that long.
+  function timing(key, r) {
+    const [g, w, , , , byTime = []] = rec(key, r);
+    if (!g || byTime.length < 5) return [0, 0, 0];
+    const avg = w / g;
+    const dev = ([bg, bw]) => logit((bw + N0_TIME * avg) / (bg + N0_TIME)) - logit(avg);
+    const merge = (list) => list.reduce((a, b) => [a[0] + b[0], a[1] + b[1]], [0, 0]);
+    return [dev(merge(byTime.slice(0, 2))), dev(byTime[2]), dev(merge(byTime.slice(3)))];
+  }
+
+  // Flags an unbalanced damage mix in words.
   function compWarning(physShares) {
     if (physShares.length < 4) return '';
     const s = physShares.reduce((a, b) => a + b, 0) / physShares.length;
     return s < 0.2 ? 'Équipe presque full AP' : s > 0.85 ? 'Équipe presque full AD' : '';
   }
 
-  return { rec, share, roleTotals, meta, matchup, synergy, enemyAssignments, mastery, compTerm, compWarning, rawLogit };
+  return { rec, share, roleTotals, meta, matchup, synergy, enemyAssignments, mastery, compTerm, compWarning, frontTerm, isFront, timing, rawLogit };
 }
 
 export { ROLE_INDEX, sigmoid, logit };

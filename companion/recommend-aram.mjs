@@ -69,6 +69,21 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
   const swap = bench.length > 0 && bench[0].p - mine.p >= SWITCH_THRESHOLD;
   const all = [mine, ...bench];
   const spread = Math.max(...all.map((x) => x.p)) - Math.min(...all.map((x) => x.p));
+  const focus = swap ? bench[0] : mine;
+  const team = [...teammates, focus.key];
+  const shares = team.map(phys).filter((x) => x != null);
+  const analysis = {
+    championId: Number(focus.key),
+    teams: {
+      us: {
+        size: team.length,
+        physical: shares.length ? shares.reduce((a, b) => a + b, 0) / shares.length : null,
+        tanks: team.filter(isFront).length,
+        warning: sr ? sr.compWarning(shares) : '',
+      },
+      them: null,
+    },
+  };
 
   const sourceNote = stats?.source
     ? `Stats ${stats.source}${stats.version ? `, patch ${stats.version}` : ''}.`
@@ -78,6 +93,7 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
     reference: { championId: Number(mine.key), label: 'ton champion' },
     options: bench.slice(0, 3).map((x) => option(x, mine)),
     current: option(mine, mine),
+    analysis,
     flat: spread < 0.005,
     note: spread < 0.005 ? `Rien ne départage ces champions pour l'instant. ${sourceNote}` : sourceNote,
   };
