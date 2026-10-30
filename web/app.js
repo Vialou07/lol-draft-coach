@@ -66,7 +66,8 @@ function renderWaiting() {
 }
 
 // Win chance for picks, expected gain in points for bans.
-const value = (o) => (o.p != null ? `${Math.round(o.p * 100)}<small>%</small>` : `${signed(o.gain)}<small> pt</small>`);
+let flat = false;
+const value = (o) => (flat ? '' : o.p != null ? `${Math.round(o.p * 100)}<small>%</small>` : `${signed(o.gain)}<small> pt</small>`);
 const valueClass = (o) => (o.p != null ? (o.p >= 0.505 ? 'up' : o.p <= 0.495 ? 'down' : 'flat') : trend(o.gain));
 
 function renderAdvice(advice) {
@@ -74,10 +75,11 @@ function renderAdvice(advice) {
     return advice?.note ? `<p class="note">${esc(advice.note)}</p>` : '';
   }
   const [best, ...rest] = advice.options;
+  flat = Boolean(advice.flat);
   const reasons = (best.reasons ?? [])
     .map((r) => `<span class="chip ${trend(r.delta)}">${esc(r.label)}<b>${signed(r.delta)}</b></span>`)
     .join('');
-  const range = best.p != null && best.low != null ? `${Math.round(best.low * 100)}–${Math.round(best.high * 100)} %` : '';
+  const range = !flat && best.p != null && best.low != null ? `${Math.round(best.low * 100)}–${Math.round(best.high * 100)} %` : '';
   const sample = [range, best.n ? games(best.n) : '', best.p == null ? best.tag : ''].filter(Boolean).join(' · ');
   const hero = `<section class="card hero" data-key="${best.championId}">
     ${icon(best.championId, 'portrait')}

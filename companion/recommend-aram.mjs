@@ -66,10 +66,12 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
   const sourceNote = stats?.source
     ? `Stats ${stats.source}${stats.version ? `, patch ${stats.version}` : ''}.`
     : 'Pas de winrates publics pour ce mode : conseil basé sur ta compo et ton bilan perso.';
+  const spread = ranked[0].p - ranked.at(-1).p;
   return {
     verb: swap ? 'Prends sur le banc' : 'Garde ton champion',
     options: ordered.slice(0, 4).map(option),
-    note: sourceNote,
+    flat: spread < 0.005,
+    note: spread < 0.005 ? `Rien ne départage ces champions pour l'instant. ${sourceNote}` : sourceNote,
   };
 }
 

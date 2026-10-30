@@ -53,7 +53,8 @@ export function draftState(session, { gameMode = '' } = {}) {
   };
 
   const inProgress = actions.filter((a) => a.isInProgress);
-  const mine = inProgress.find((a) => a.actorCellId === myCell);
+  // During PLANNING every ban shows as in progress, but the player is only declaring a pick.
+  const mine = session.timer?.phase === 'PLANNING' ? null : inProgress.find((a) => a.actorCellId === myCell);
   const myPick = pickActionsUsable ? picksOf(myCell).at(-1) : null;
   const enemyPicksAfterMe = myPick
     ? actions.filter((a) => a.type === 'pick' && !isAlly(a) && !a.completed && a.turn >= myPick.turn).length

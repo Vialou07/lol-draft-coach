@@ -77,14 +77,22 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     state.status = 'champ-select';
     if (fresh) {
       pickable = null;
+      const me = state.draft.allies.find((p) => p.me);
+      onLog(`Sélection : file ${state.draft.queueId} (${state.queue?.gameMode ?? '?'}), mode ${state.draft.kind}, rôle ${me?.role || '-'}`);
       tryGet(client, '/lol-champ-select/v1/pickable-champion-ids').then((ids) => {
+        onLog(`Champions jouables : ${Array.isArray(ids) ? ids.length : 'indisponible'}`);
         if (!Array.isArray(ids) || state.status !== 'champ-select') return;
         pickable = ids;
         advise();
         changed();
       });
     }
+    const before = JSON.stringify(state.advice?.options?.[0] ?? null);
     advise();
+    const top = state.advice?.options?.[0];
+    if (JSON.stringify(top ?? null) !== before && top) {
+      onLog(`Conseil (${state.draft.phase}${state.draft.myTurn ? `, ton ${state.draft.myTurn}` : ''}) : ${state.advice.verb} ${state.champions[top.championId]?.name ?? top.championId} ${top.p != null ? Math.round(top.p * 100) + ' %' : ''}`);
+    }
     changed();
   };
 
@@ -106,7 +114,14 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   };
 
   const refreshProfile = async (client) => {
-    profile = await buildProfile(client).catch(() => profile);
+    profile = await buildProfile(client).catch((e) => {
+      onLog(`Profil indisponible : ${e.message}`);
+      return profile;
+    });
+    if (profile) {
+      const known = Object.values(profile.champions).filter((c) => c.games || c.mastery).length;
+      onLog(`Profil : ${profile.gamesRead} parties lues, ${known} champions connus, rang ${profile.rank ? `${profile.rank.tier} ${profile.rank.division}` : 'aucun'}`);
+    }
   };
 
   const connect = async () => {
@@ -128,6 +143,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     ws = subscribe(client, [TOPICS.session, TOPICS.gameflow], (topic, event) => {
       if (topic === TOPICS.gameflow) return onGameflow(client, event.data);
       if (event.eventType === 'Delete') {
+        onLog('Fin de la sélection des champions.');
         state.draft = null;
         state.advice = null;
         lastDraftKey = '';
@@ -163,7 +179,10 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   // Stats can take a while to download: serve the page right away and advise once they land.
   const ready = Promise.all([
     loadInfo(state.assets.ddragon).then((i) => (info = i ?? {})),
-    loadStats({ onLog }).then((s) => (stats = s ?? {})),
+    loadStats({ onLog }).then((s) => {
+      stats = s ?? {};
+      onLog(`Stats : draft ${stats.draft ? `patch ${stats.draft.version}` : 'absentes'}, ARAM ${Object.keys(stats.aram ?? {}).join(', ') || 'absentes'}`);
+    }),
   ]).then(() => {
     advise();
     changed();
