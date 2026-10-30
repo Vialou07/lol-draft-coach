@@ -22,7 +22,14 @@ test('the websocket only subscribes (WAMP type 5)', () => {
 
 test('no other module talks to the client directly', () => {
   for (const [f, src] of Object.entries(sources)) {
-    if (f === 'lcu.mjs') continue;
+    // live.mjs reads Riot's official in-game API (port 2999), not the client: GET only.
+    if (f === 'lcu.mjs' || f === 'live.mjs') continue;
     assert.doesNotMatch(src, /127\.0\.0\.1|riot:\$\{/, `${f} must go through lcu.mjs`);
   }
+});
+
+test('the in-game API is only read, never written', () => {
+  const live = sources['live.mjs'];
+  assert.doesNotMatch(live, /method\s*:|https\.request\(/);
+  assert.match(live, /https\.get\(/);
 });

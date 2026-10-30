@@ -1,0 +1,297 @@
+{
+ "activePlayer": {
+  "riotId": "Testeur#EUW",
+  "riotIdGameName": "Testeur",
+  "currentGold": 1180.5,
+  "level": 9
+ },
+ "allPlayers": [
+  {
+   "championName": "Gangplank",
+   "rawChampionName": "game_character_displayname_Gangplank",
+   "isBot": false,
+   "isDead": false,
+   "items": [
+    {
+     "itemID": 3078,
+     "displayName": "Force de la trinité",
+     "count": 1,
+     "slot": 0,
+     "price": 3333
+    }
+   ],
+   "level": 9,
+   "position": "TOP",
+   "riotId": "Allié1#EUW",
+   "scores": {
+    "kills": 1,
+    "deaths": 2,
+    "assists": 6,
+    "creepScore": 20,
+    "wardScore": 12
+   },
+   "team": "ORDER"
+  },
+  {
+   "championName": "Volibear",
+   "rawChampionName": "game_character_displayname_Volibear",
+   "isBot": false,
+   "isDead": false,
+   "items": [
+    {
+     "itemID": 3068,
+     "displayName": "Égide solaire",
+     "count": 1,
+     "slot": 0,
+     "price": 2800
+    }
+   ],
+   "level": 9,
+   "position": "JUNGLE",
+   "riotId": "Allié2#EUW",
+   "scores": {
+    "kills": 1,
+    "deaths": 2,
+    "assists": 6,
+    "creepScore": 20,
+    "wardScore": 12
+   },
+   "team": "ORDER"
+  },
+  {
+   "championName": "Lux",
+   "rawChampionName": "game_character_displayname_Lux",
+   "isBot": false,
+   "isDead": false,
+   "items": [
+    {
+     "itemID": 6655,
+     "displayName": "Écho de Luden",
+     "count": 1,
+     "slot": 0,
+     "price": 2750
+    }
+   ],
+   "level": 9,
+   "position": "MIDDLE",
+   "riotId": "Allié3#EUW",
+   "scores": {
+    "kills": 1,
+    "deaths": 2,
+    "assists": 6,
+    "creepScore": 20,
+    "wardScore": 12
+   },
+   "team": "ORDER"
+  },
+  {
+   "championName": "Ezreal",
+   "rawChampionName": "game_character_displayname_Ezreal",
+   "isBot": false,
+   "isDead": false,
+   "items": [
+    {
+     "itemID": 3078,
+     "displayName": "Force de la trinité",
+     "count": 1,
+     "slot": 0,
+     "price": 3333
+    },
+    {
+     "itemID": 3158,
+     "displayName": "Bottes de lucidité",
+     "count": 1,
+     "slot": 1,
+     "price": 900
+    }
+   ],
+   "level": 9,
+   "position": "BOTTOM",
+   "riotId": "Allié4#EUW",
+   "scores": {
+    "kills": 1,
+    "deaths": 2,
+    "assists": 6,
+    "creepScore": 20,
+    "wardScore": 12
+   },
+   "team": "ORDER"
+  },
+  {
+   "championName": "Nami",
+   "rawChampionName": "game_character_displayname_Nami",
+   "isBot": false,
+   "isDead": false,
+   "items": [
+    {
+     "itemID": 3870,
+     "displayName": "Rêve éveillé",
+     "count": 1,
+     "slot": 0,
+     "price": 400
+    },
+    {
+     "itemID": 3158,
+     "displayName": "Bottes de lucidité",
+     "count": 1,
+     "slot": 1,
+     "price": 900
+    },
+    {
+     "itemID": 2055,
+     "displayName": "Balise de contrôle",
+     "count": 1,
+     "slot": 2,
+     "price": 75
+    }
+   ],
+   "level": 9,
+   "position": "UTILITY",
+   "riotId": "Testeur#EUW",
+   "scores": {
+    "kills": 1,
+    "deaths": 2,
+    "assists": 6,
+    "creepScore": 20,
+    "wardScore": 12
+   },
+   "team": "ORDER"
+  },
+  {
+   "championName": "Aatrox",
+   "rawChampionName": "game_character_displayname_Aatrox",
+   "isBot": false,
+   "isDead": false,
+   "items": [
+    {
+     "itemID": 3071,
+     "displayName": "Couperet noir",
+     "count": 1,
+     "slot": 0,
+     "price": 3000
+    }
+   ],
+   "level": 9,
+   "position": "TOP",
+   "riotId": "Ennemi1#EUW",
+   "scores": {
+    "kills": 1,
+    "deaths": 2,
+    "assists": 6,
+    "creepScore": 20,
+    "wardScore": 12
+   },
+   "team": "CHAOS"
+  },
+  {
+   "championName": "Sylas",
+   "rawChampionName": "game_character_displayname_Sylas",
+   "isBot": false,
+   "isDead": false,
+   "items": [
+    {
+     "itemID": 3152,
+     "displayName": "Ceinture-roquette Hextech",
+     "count": 1,
+     "slot": 0,
+     "price": 2650
+    }
+   ],
+   "level": 9,
+   "position": "JUNGLE",
+   "riotId": "Ennemi2#EUW",
+   "scores": {
+    "kills": 1,
+    "deaths": 2,
+    "assists": 6,
+    "creepScore": 20,
+    "wardScore": 12
+   },
+   "team": "CHAOS"
+  },
+  {
+   "championName": "Yone",
+   "rawChampionName": "game_character_displayname_Yone",
+   "isBot": false,
+   "isDead": false,
+   "items": [
+    {
+     "itemID": 3153,
+     "displayName": "Lame du roi déchu",
+     "count": 1,
+     "slot": 0,
+     "price": 3200
+    }
+   ],
+   "level": 9,
+   "position": "MIDDLE",
+   "riotId": "Ennemi3#EUW",
+   "scores": {
+    "kills": 1,
+    "deaths": 2,
+    "assists": 6,
+    "creepScore": 20,
+    "wardScore": 12
+   },
+   "team": "CHAOS"
+  },
+  {
+   "championName": "Miss Fortune",
+   "rawChampionName": "game_character_displayname_MissFortune",
+   "isBot": false,
+   "isDead": false,
+   "items": [
+    {
+     "itemID": 3033,
+     "displayName": "Rappel mortel",
+     "count": 1,
+     "slot": 0,
+     "price": 3000
+    }
+   ],
+   "level": 9,
+   "position": "BOTTOM",
+   "riotId": "Ennemi4#EUW",
+   "scores": {
+    "kills": 1,
+    "deaths": 2,
+    "assists": 6,
+    "creepScore": 20,
+    "wardScore": 12
+   },
+   "team": "CHAOS"
+  },
+  {
+   "championName": "Pantheon",
+   "rawChampionName": "game_character_displayname_Pantheon",
+   "isBot": false,
+   "isDead": false,
+   "items": [
+    {
+     "itemID": 3870,
+     "displayName": "Rêve éveillé",
+     "count": 1,
+     "slot": 0,
+     "price": 400
+    }
+   ],
+   "level": 9,
+   "position": "UTILITY",
+   "riotId": "Ennemi5#EUW",
+   "scores": {
+    "kills": 1,
+    "deaths": 2,
+    "assists": 6,
+    "creepScore": 20,
+    "wardScore": 12
+   },
+   "team": "CHAOS"
+  }
+ ],
+ "gameData": {
+  "gameMode": "CLASSIC",
+  "gameTime": 742.3,
+  "mapNumber": 11,
+  "mapName": "Map11"
+ }
+}

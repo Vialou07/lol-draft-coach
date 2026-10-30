@@ -102,7 +102,7 @@ function renderWaiting() {
   const demo = `<section class="tile">
       <div class="tile-title">Voir une démo</div>
       <p>Rejoue une de tes vraies sélections, pour voir l'écran avant une partie.</p>
-      <div class="buttons"><button data-demo="ranked">Ranked solo</button><button data-demo="aram">ARAM du Chaos</button></div>
+      <div class="buttons"><button data-demo="ranked">Ranked solo</button><button data-demo="aram">ARAM du Chaos</button><button data-demo="game">En partie</button></div>
     </section>`;
   const qr = onPc && phone?.groupQr
     ? `<section class="tile phone"><div class="qr">${phone.groupQr}</div><div>
@@ -262,6 +262,58 @@ function renderAnalysis(an) {
     <section class="analysis">${rows.join('')}${warnings}${fixes ? `<div class="fixes"><span class="muted small">Pour combler :</span>${fixes}</div>` : ''}</section>`;
 }
 
+// --- In game: what to buy, the usual build, what their team calls for ---
+
+const itemIcon = (id, cls = '') => `<img class="${cls}" src="https://ddragon.leagueoflegends.com/cdn/${state?.assets?.ddragon ?? DDRAGON}/img/item/${id}.png" alt="${esc(state?.game?.itemNames?.[id] ?? id)}">`;
+const clock = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+const golds = (n) => `${Math.round(n).toLocaleString('fr-FR')} po`;
+
+function renderGame() {
+  const g = state.game;
+  const name = (id) => g.itemNames?.[id] ?? `#${id}`;
+  const demo = state.demo?.name === 'game'
+    ? `<div class="demo-bar step"><span>${esc(state.demo.caption)}</span>${remote ? '' : '<button data-demo="stop">Arrêter</button>'}</div>`
+    : '';
+  const buy = g.buy
+    ? `<section class="card buy">${itemIcon(g.buy.item, 'portrait')}
+        <div class="title"><span class="name">${esc(name(g.buy.item))}</span></div>
+        <div class="num"><span class="big ${g.buy.short ? 'down' : 'up'}">${g.buy.short ? `−${g.buy.short}` : g.buy.cost}<small> po</small></span></div>
+        <div class="chips"><span class="tag">${esc(g.buy.short ? `il te manque ${g.buy.short} po` : g.buy.item !== g.buy.for ? `vers ${name(g.buy.for)}` : 'item complet')}</span></div>
+      </section>`
+    : '<p class="note">Ton build est complet.</p>';
+  const path = g.path.length
+    ? `<section class="path">${g.path.map((p) => `<div class="slot-item ${p.owned ? 'owned' : ''} ${p.item === g.buy?.for ? 'next' : ''}">${itemIcon(p.item)}${p.owned ? '<b>✓</b>' : ''}</div>`).join('<i class="arrow">›</i>')}</section>`
+    : '';
+  const adapt = g.adapt.length
+    ? `<div class="label"><span>Adapté à leur compo</span><b>à toi de voir</b></div>
+      <section class="analysis">${g.adapt.map((a) => `<div class="arow"><span class="trap">${itemIcon(a.item, 'mini-item')}<span class="aname">${esc(name(a.item))}</span></span><div class="abody"><span class="muted small">${esc(a.reason)}</span></div></div>`).join('')}</section>`
+    : '';
+  const e = g.enemy ?? {};
+  const enemyRows = [
+    e.physical != null ? `<div class="arow"><span class="alabel">Leurs dégâts</span><div class="abody">${damageBar({ physical: e.physical })}</div></div>` : '',
+    e.healers?.length ? `<div class="arow"><span class="alabel">Soins</span><div class="abody">${e.healers.map((id) => `<span class="duo">${mini(id)}<span class="small">${esc(champName(id))}</span></span>`).join('')}</div></div>` : '',
+    `<div class="arow"><span class="alabel">Tanks</span><div class="abody"><b>${e.tanks ?? 0}</b></div></div>`,
+  ].join('');
+  const skills = g.skills?.priority
+    ? `<div class="arow"><span class="alabel">Sorts</span><div class="abody"><b class="skills">${esc(g.skills.priority.split('').join(' › '))}</b><span class="muted small">départ ${esc(g.skills.start.join(' '))}</span></div></div>`
+    : '';
+  const source = g.source ? `Build des joueurs de ton rang sur ${g.source.games.toLocaleString('fr-FR')} parties (${g.source.queue === 'normal_aram' ? 'ARAM' : 'ranked'}, u.gg, patch ${g.source.patch.replace('_', '.')}).` : 'Pas de build disponible pour ce champion.';
+  return `${demo}
+    <header class="head">
+      <div><h1>En partie</h1><div class="sub"><i class="dot"></i>${esc(champName(g.championId))} · ${clock(g.gameTime)}</div></div>
+      <div class="gold">${golds(g.gold)}</div>
+    </header>
+    <div class="label"><span>Achète maintenant</span></div>
+    ${buy}
+    <div class="label"><span>Ton build</span><b>${g.source ? `${Math.round((g.source.wins / Math.max(1, g.source.games)) * 100)} % de victoires` : ''}</b></div>
+    ${path}
+    ${adapt}
+    <div class="label"><span>Eux</span></div>
+    <section class="analysis">${enemyRows}${skills}</section>
+    <p class="note">${esc(source)}</p>
+    <p class="legal">${LEGAL}</p>`;
+}
+
 function renderAvoid(a) {
   if (!a.avoid?.length) return '';
   const rows = a.avoid.map((t) => `<div class="arow"><span class="trap">${mini(t.championId)}<span class="aname">${esc(champName(t.championId))}</span></span>
@@ -307,6 +359,10 @@ function renderAdvice(d, a) {
 }
 
 function render() {
+  if (state?.game) {
+    app.innerHTML = renderGame();
+    return;
+  }
   if (remote && !state) {
     app.innerHTML = renderGroupWaiting();
     return;
@@ -412,7 +468,7 @@ function onState(next) {
     deadline = null;
   }
   if (!d) opened.clear();
-  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name), state.settings]);
+  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name), state.settings, state.game]);
   if (key !== lastKey) {
     lastKey = key;
     render();

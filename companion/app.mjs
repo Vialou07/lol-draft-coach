@@ -13,6 +13,11 @@ import { loadAttributes } from './static-attrs.mjs';
 import { loadEloStats, TIER_SLUGS, DEFAULT_TIER } from './stats-elo.mjs';
 import { loadGroup, groupLink, playerIdFor, startRelay } from './relay.mjs';
 import { assignBench } from './team.mjs';
+import { readLiveGame } from './live.mjs';
+import { adviseBuild, championKeyOf } from './advise-build.mjs';
+import { loadBuild, RANK_CODES, DEFAULT_RANK } from './stats-builds.mjs';
+import { loadItems } from './items.mjs';
+import { createDraftModel } from './model-draft.mjs';
 
 const RETRY_MS = 3000;
 const SETTINGS = new URL('../data/local/settings.json', import.meta.url);
@@ -23,6 +28,7 @@ const DEMOS = {
   aram: { file: 'q2400-2026-10-24-40.json', queue: { id: 2400, gameMode: 'KIWI', name: 'ARAM du Chaos' } },
 };
 const DEMO_SPEED = 1.5;
+const LIVE_POLL_MS = 3000;
 // With the client closed the demo has no personal data, which would rate every champion as
 // never played: a sample support pool stands in, and the page says so.
 const SAMPLE_PROFILE = {
@@ -69,7 +75,7 @@ const defaultStats = async ({ onLog, info }) => {
   return { draft, mayhem };
 };
 
-export async function startCompanion({ port = 4317, host, lockfile, onLog = () => {}, loadStats = defaultStats, loadInfo = loadChampionInfo, loadAttrs = loadAttributes, loadElo = loadEloStats, share = true } = {}) {
+export async function startCompanion({ port = 4317, host, lockfile, onLog = () => {}, loadStats = defaultStats, loadInfo = loadChampionInfo, loadAttrs = loadAttributes, loadElo = loadEloStats, share = true, readLive = readLiveGame, getBuild = loadBuild, getItems = loadItems } = {}) {
   const state = {
     status: 'no-client',
     gameflow: 'None',
@@ -102,6 +108,10 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   let lastDraftKey = '';
 
   let demo = null;
+  let items = {};
+  let lastPick = null; // { kind, role } of the last champ select, for the in-game build
+  let liveTimer = null;
+  let liveBuild = null; // { key, build }
   let rawSession = null; // last champ select payload, to compute each ally's own advice
   let aramViews = null; // ARAM: the whole team's views, with the shared bench split between players
   const friendProfiles = new Map();
@@ -119,6 +129,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     actions: {
       '/demo/ranked': () => startDemo('ranked'),
       '/demo/aram': () => startDemo('aram'),
+      '/demo/game': () => startGameDemo(),
       '/demo/stop': () => stopDemo(),
       '/settings': async (input) => {
         const learning = Array.isArray(input?.learning) ? [...new Set(input.learning.map(Number).filter((id) => id > 0))].slice(0, 12) : state.settings.learning;
@@ -203,7 +214,83 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     }
   };
 
+  // Damage profile of a champion in a role (main role when unknown), for reading team mixes.
+  let physModel = null;
+  const physOf = (key, r) => {
+    if (!key || !stats.draft) return null;
+    physModel ??= createDraftModel(stats.draft);
+    let role = r;
+    if (role == null) {
+      role = 0;
+      for (let i = 1; i < 5; i++) if (physModel.share(key, i) > physModel.share(key, role)) role = i;
+    }
+    return physModel.rec(key, role)[4];
+  };
+
+  const LIVE_ROLES = { TOP: 'top', JUNGLE: 'jungle', MIDDLE: 'mid', BOTTOM: 'bot', UTILITY: 'support' };
+  const adviseLive = async (live) => {
+    const me = live.allPlayers?.find((p) => p.riotId === live.activePlayer?.riotId) ?? live.allPlayers?.[0];
+    const key = me && championKeyOf(me, info);
+    if (!key) return;
+    const mode = live.gameData?.gameMode ?? '';
+    if (mode === 'CHERRY') return; // Arena: no build source yet
+    const queue = lastPick?.kind === 'aram' || /ARAM|KIWI/.test(mode) ? 'normal_aram' : 'ranked_solo_5x5';
+    if (liveBuild?.key !== key) {
+      liveBuild = { key, build: null };
+      const role = lastPick?.role || LIVE_ROLES[me.position] || '';
+      const rank = RANK_CODES[profile?.rank?.tier] ?? DEFAULT_RANK;
+      liveBuild.build = await getBuild(key, { queue, role, rank, version: stats.draft?.version ?? state.assets.ddragon }).catch(() => null);
+      onLog(`Build de ${info[key]?.name ?? key} : ${liveBuild.build ? `${liveBuild.build.core.games} parties (${queue})` : 'indisponible'}`);
+    }
+    const advice = adviseBuild(live, { build: liveBuild.build, items, info, physOf });
+    if (!advice) return;
+    const ids = new Set([...advice.path.map((p) => p.item), ...advice.adapt.map((a) => a.item), advice.buy?.item, advice.buy?.for].filter(Boolean));
+    state.game = { ...advice, itemNames: Object.fromEntries([...ids].map((id) => [id, items[id]?.name ?? String(id)])) };
+    changed();
+  };
+
+  const startLive = () => {
+    if (liveTimer) return;
+    const poll = async () => {
+      const live = await readLive();
+      if (live) await adviseLive(live).catch((e) => onLog(`Build en partie : ${e.message}`));
+      liveTimer = setTimeout(poll, LIVE_POLL_MS);
+    };
+    poll();
+  };
+  const stopLive = () => {
+    clearTimeout(liveTimer);
+    liveTimer = null;
+    liveBuild = null;
+    if (state.game) {
+      state.game = null;
+      changed();
+    }
+  };
+
+  // Demo of the in-game screen: a recorded-format sample game.
+  const startGameDemo = async () => {
+    if (state.status === 'champ-select' || state.gameflow === 'InProgress') return { error: 'Une partie est en cours.' };
+    const live = JSON.parse(await readFile(new URL('../test/fixtures/live-sample.json', import.meta.url), 'utf8'));
+    state.demo = { name: 'game', profile: profile ? 'real' : 'sample', caption: 'En partie : quoi acheter avec tes golds maintenant, ton build habituel, et ce que leur compo demande.' };
+    state.status = 'in-game';
+    await adviseLive(live);
+    setTimeout(() => {
+      if (state.demo?.name !== 'game') return;
+      Object.assign(state, { demo: null, game: null, status: client ? 'connected' : 'no-client' });
+      liveBuild = null;
+      changed();
+    }, 45000);
+    return { ok: true };
+  };
+
   const stopDemo = () => {
+    if (state.demo?.name === 'game') {
+      Object.assign(state, { demo: null, game: null, status: client ? 'connected' : 'no-client' });
+      liveBuild = null;
+      changed();
+      return {};
+    }
     if (!demo) return {};
     demo.cancelled = true;
     demo.resume?.();
@@ -306,7 +393,13 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   };
 
   const onGameflow = async (client, phase) => {
+    if (state.draft) {
+      const me = state.draft.allies.find((p) => p.me);
+      lastPick = { kind: state.draft.kind, role: me?.role ?? '' };
+    }
     state.gameflow = phase;
+    if (phase === 'InProgress') startLive();
+    else stopLive();
     if (demo && phase !== 'ChampSelect') return changed();
     if (demo) stopDemo();
     if (phase === 'ChampSelect') {
@@ -416,6 +509,9 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       for (const [key, a] of Object.entries(attrs)) if (info[key]) info[key] = { ...info[key], attrs: a };
       info = { ...info };
     })
+    .then(async () => {
+      items = getItems ? (await getItems(state.assets.ddragon).catch(() => ({}))) ?? {} : {};
+    })
     .then(() => loadStats({ onLog, info }))
     .then((s) => {
       stats = s ?? {};
@@ -438,6 +534,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       stopped = true;
       clearTimeout(retry);
       ws?.terminate();
+      clearTimeout(liveTimer);
       await relay?.stop();
       await server.close();
     },
