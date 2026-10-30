@@ -1,0 +1,16 @@
+{
+  "name": "lol-draft-coach",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Conseiller de sélection de champions LoL en direct",
+  "type": "module",
+  "scripts": {
+    "start": "node companion/index.mjs",
+    "test": "node --test test/*.test.mjs",
+    "demo": "node test/demo.mjs"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "ws": "8.18.0"
+  }
+}
