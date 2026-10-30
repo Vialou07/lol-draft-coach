@@ -19,6 +19,8 @@ const onPc = ['localhost', '127.0.0.1'].includes(location.hostname);
 const DOWNLOAD = 'https://github.com/Vialou07/lol-draft-coach/releases/latest/download/LolDraftCoach.exe';
 const REPO = 'https://github.com/Vialou07/lol-draft-coach';
 const onWindows = /Windows NT/.test(navigator.userAgent) && !/Mobile|Android|iPhone|iPad/.test(navigator.userAgent);
+// The public copy on GitHub Pages; anything else is served by a companion (PC or Wi-Fi address).
+const hosted = location.hostname.endsWith('github.io');
 const hash = new URLSearchParams(location.hash.slice(1));
 const remote = hash.get('g') && hash.get('k') ? { group: hash.get('g'), key: hash.get('k') } : null;
 const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
@@ -443,7 +445,7 @@ function renderAdvice(d, a) {
 }
 
 function render() {
-  if (!onPc && !remote) {
+  if (hosted && !remote) {
     app.innerHTML = renderLanding();
     return;
   }
@@ -681,4 +683,4 @@ if (onPc && !remote) {
 }
 render();
 if (remote) connectRemote().catch(() => (linkLost.hidden = false));
-else connect();
+else if (!hosted) connect();
