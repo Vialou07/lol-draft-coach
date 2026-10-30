@@ -20,7 +20,7 @@ import { cleanupOldVersion, findUpdate, installUpdate, restart } from './update.
 import { dataFile } from './paths.mjs';
 import { readLiveGame } from './live.mjs';
 import { adviseBuild, championKeyOf } from './advise-build.mjs';
-import { loadBuild, RANK_CODES, DEFAULT_RANK } from './stats-builds.mjs';
+import { loadBuild, RANK_CODES, DEFAULT_RANK, VARIANTS } from './stats-builds.mjs';
 import { loadItems } from './items.mjs';
 import { createDraftModel } from './model-draft.mjs';
 
@@ -117,7 +117,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   let items = {};
   let lastPick = null; // { kind, role } of the last champ select, for the in-game build
   let liveTimer = null;
-  let liveBuild = null; // { key, build }
+  let liveBuild = null; // { key, builds: { default, ap, tank, ad } }
   let rawSession = null; // last champ select payload, to compute each ally's own advice
   let aramViews = null; // ARAM: the whole team's views, with the shared bench split between players
   const friendProfiles = new Map();
@@ -193,9 +193,9 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       ? []
       : aramViews ?? [{ cellId: state.draft.allies.find((p) => p.me)?.cellId, name: state.summoner?.gameName ?? 'Moi', self: true, draft: state.draft, advice: state.advice }, ...allyViews()];
     const ids = new Set();
-    JSON.stringify(views, (k, v) => {
+    JSON.stringify([views, state.game, state.plan], (k, v) => {
       if (/^(championId|hoverId|opponentId|vsId)$/.test(k) && v > 0) ids.add(String(v));
-      if (k === 'bench' || k === 'ally' || k === 'enemy') v?.forEach?.((id) => ids.add(String(id)));
+      if (k === 'bench' || k === 'ally' || k === 'enemy' || k === 'healers') v?.forEach?.((id) => ids.add(String(id)));
       return v;
     });
     return {
@@ -208,6 +208,8 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       assets: state.assets,
       champions: Object.fromEntries([...ids].filter((id) => state.champions[id]).map((id) => [id, state.champions[id]])),
       views,
+      game: state.game,
+      plan: ['GameStart', 'InProgress'].includes(state.gameflow) ? state.plan : null,
     };
   };
 
@@ -256,15 +258,21 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     if (mode === 'CHERRY') return; // Arena: no build source yet
     const queue = lastPick?.kind === 'aram' || /ARAM|KIWI/.test(mode) ? 'normal_aram' : 'ranked_solo_5x5';
     if (liveBuild?.key !== key) {
-      liveBuild = { key, build: null };
+      // The most played build and its AP, tank and AD variants: the advice follows what you buy.
+      liveBuild = { key, builds: {} };
       const role = lastPick?.role || LIVE_ROLES[me.position] || '';
       const rank = RANK_CODES[profile?.rank?.tier] ?? DEFAULT_RANK;
-      liveBuild.build = await getBuild(key, { queue, role, rank, version: stats.draft?.version ?? state.assets.ddragon }).catch(() => null);
-      onLog(`Build de ${info[key]?.name ?? key} : ${liveBuild.build ? `${liveBuild.build.core.games} parties (${queue})` : 'indisponible'}`);
+      const names = Object.keys(VARIANTS);
+      const found = await Promise.all(names.map((variant) => getBuild(key, { queue, role, rank, variant, version: stats.draft?.version ?? state.assets.ddragon }).catch(() => null)));
+      names.forEach((variant, i) => {
+        if (found[i]) liveBuild.builds[variant] = found[i];
+      });
+      const games = Object.entries(liveBuild.builds).map(([v, b]) => `${v} ${b.core.games}`).join(', ');
+      onLog(`Build de ${info[key]?.name ?? key} (${queue}) : ${games || 'indisponible'}`);
     }
-    const advice = adviseBuild(live, { build: liveBuild.build, items, info, physOf });
+    const advice = adviseBuild(live, { builds: liveBuild.builds, items, info, physOf });
     if (!advice) return;
-    const ids = new Set([...advice.path.map((p) => p.item), ...advice.adapt.map((a) => a.item), advice.buy?.item, advice.buy?.for].filter(Boolean));
+    const ids = new Set([...advice.path.map((p) => p.item), ...advice.adapt.map((a) => a.item), ...advice.alternatives.map((a) => a.item), advice.buy?.item, advice.buy?.for].filter(Boolean));
     state.game = { ...advice, itemNames: Object.fromEntries([...ids].map((id) => [id, items[id]?.name ?? String(id)])) };
     changed();
   };

@@ -233,3 +233,35 @@ button:hover { border-color: var(--gold); }
 a.button { display: inline-block; font: 700 14px var(--body); color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; text-decoration: none; white-space: nowrap; }
 a.button.primary { background: var(--gold); border-color: var(--gold); color: #1a1408; }
 .note a { color: var(--muted); }
+
+/* Columns: one on a phone, two on a PC (the choice, then the reading of the draft) */
+.cols, .col, .tiles { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.card.mine .tag { color: var(--gold); font-weight: 700; }
+.card.mine:not(.ref) { box-shadow: inset 0 0 0 1.5px var(--gold-soft); }
+.chip.tier b { margin-left: 3px; }
+.chip.tier.up b { color: var(--pos); }
+.chip.tier.amber b { color: var(--gold); }
+.chip.tier.down b { color: var(--neg); }
+.note.good { color: var(--pos); }
+
+@media (min-width: 900px) {
+  main { max-width: 1180px; padding: 28px 36px 24px; gap: 14px; }
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; align-items: start; }
+  .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+  .head h1 { font-size: 54px; }
+  .head h1.long { font-size: 44px; }
+  .ring { width: 70px; height: 70px; }
+  .ring span { font-size: 30px; }
+  .wait { padding-top: 36px; }
+  .wait p { max-width: 52ch; }
+  .grid { grid-template-columns: 48px repeat(5, 1fr); padding: 12px 10px 10px; row-gap: 8px; }
+  .pic { width: 50px; height: 50px; border-radius: 12px; }
+  .bench .pic { width: 44px; height: 44px; }
+  .card { grid-template-columns: 60px minmax(0, 1fr) auto; padding: 16px 16px 14px; }
+  .card .portrait { width: 60px; height: 60px; }
+  .card .name { font-size: 26px; }
+  .big { font-size: 42px; }
+  .slot-item { width: 48px; height: 48px; }
+  .label { font-size: 12px; }
+  .arow { padding: 12px 0; }
+}

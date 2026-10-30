@@ -1,11 +1,12 @@
 // ARAM and ARAM Mayhem advice: keep your champion or take one from the bench.
 // Enemies are hidden until loading, so a choice only depends on the champion's strength in
-// the mode, your own record with it, and the balance of your team.
+// the mode, your own record with it, and the balance of your team. The number shown is the
+// champion's winrate in the mode (what tier lists show), moved by your record and your team.
 
 import { createDraftModel, sigmoid, toPoints } from './model-draft.mjs';
 
 const N0_MODE = 1000; // pseudo-games pulling a mode winrate towards 50 % [assumption]
-const ASSUMED_GAMES = 3000; // the source publishes no sample size [assumption]
+const ASSUMED_GAMES = 3000; // the source publishes no sample size, only for the range [assumption]
 const N0_PERSONAL = 40; // a personal record over a few games is mostly noise
 const NO_FRONTLINE = -0.08; // logit, about −2 points for a team without any tank [assumption]
 const SWITCH_THRESHOLD = 0.01; // advise a bench swap only above one point of win chance
@@ -20,12 +21,13 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
   if (srStats && srCache.stats !== srStats) srCache = { stats: srStats, model: createDraftModel(srStats) };
   const sr = srStats ? srCache.model : null;
 
+  // Winrates without a sample size come from very large samples (a whole server): used as they
+  // are, so the number matches the tier list. Counted samples are pulled towards 50 %.
   const mode = (key) => {
     const rec = stats?.champs?.[key];
-    if (!rec) return { value: 0, variance: 0, games: 0 };
-    const g = rec.games ?? ASSUMED_GAMES;
-    const p = (rec.wr * g + N0_MODE * 0.5) / (g + N0_MODE);
-    return { value: Math.log(p / (1 - p)), variance: 4 / (g + N0_MODE), games: rec.games ?? 0 };
+    if (!rec) return { value: 0, variance: 0, games: 0, tier: null };
+    const p = rec.games ? (rec.wr * rec.games + N0_MODE * 0.5) / (rec.games + N0_MODE) : rec.wr;
+    return { value: Math.log(p / (1 - p)), variance: 4 / ((rec.games ?? ASSUMED_GAMES) + N0_MODE), games: rec.games ?? 0, tier: rec.tier ?? null };
   };
   const personal = (key) => {
     const q = profile?.champions?.[key]?.byQueue?.[queue] ?? { games: 0, wins: 0 };
@@ -48,26 +50,29 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
     return { balance, front };
   };
 
-  const base = teammates.reduce((s, k) => s + mode(k).value, 0);
   const score = (key, tag) => {
     const m = mode(key);
     const p = personal(key);
     const c = comp(key);
     const terms = { mode: m.value, personal: p.value, comp: c.balance, front: c.front };
     const total = Object.values(terms).reduce((s, x) => s + x, 0);
-    return { key, tag, p: sigmoid(base + total), variance: m.variance + p.variance, terms, games: m.games, personalGames: p.games, personalWins: p.wins };
+    return { key, tag, p: sigmoid(total), variance: m.variance + p.variance, terms, games: m.games, tier: m.tier, personalGames: p.games, personalWins: p.wins };
   };
 
-  const mine = score(String(me.championId), 'Ton champion');
+  const mine = { ...score(String(me.championId), 'Ton champion'), mine: true };
   // The bench only lets you take champions you own. If the list would hide the whole bench,
   // it is probably not what we think it is: show the bench unfiltered.
   const ownedSet = owned?.length ? new Set(owned) : null;
   const usable = ownedSet ? draft.bench.filter((id) => ownedSet.has(id)) : draft.bench;
   const bench = (usable.length ? usable : draft.bench)
-    .map((id) => score(String(id), 'Sur le banc'))
+    .map((id) => score(String(id), 'Banc'))
     .sort((a, b) => b.p - a.p);
   const swap = bench.length > 0 && bench[0].p - mine.p >= SWITCH_THRESHOLD;
+  const focus = swap ? bench[0] : mine;
   const all = [mine, ...bench];
+  // One list: the advice first, then the others by strength, your champion always in it.
+  const shown = [focus, ...all.filter((x) => x !== focus).sort((a, b) => b.p - a.p)].slice(0, 4);
+  if (!shown.includes(mine)) shown[shown.length - 1] = mine;
   const spread = Math.max(...all.map((x) => x.p)) - Math.min(...all.map((x) => x.p));
   // Our team's make-up with a given champion in my seat (the team split may change who I take).
   const analysisWith = (key) => {
@@ -87,15 +92,16 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
     };
   };
   const analysisFor = Object.fromEntries(all.map((x) => [x.key, analysisWith(x.key)]));
-  const analysis = analysisFor[(swap ? bench[0] : mine).key];
+  const analysis = analysisFor[focus.key];
 
   const sourceNote = stats?.source
     ? `Stats ${stats.source}${stats.version ? `, patch ${stats.version}` : ''}.`
     : 'Pas de winrates publics pour ce mode : conseil basé sur ta compo et ton bilan perso.';
   return {
-    verb: swap ? 'Prends sur le banc' : 'Garde ton champion',
+    verb: swap ? 'Prends' : 'Garde',
+    focus: Number(focus.key),
     reference: { championId: Number(mine.key), label: 'ton champion' },
-    options: bench.slice(0, 3).map((x) => option(x, mine)),
+    options: shown.map((x) => ({ ...option(x, mine), close: x !== focus && focus.p - x.p < SWITCH_THRESHOLD })),
     current: option(mine, mine),
     analysis,
     analysisFor,
@@ -107,11 +113,12 @@ export function recommendAram(draft, { stats, profile, info = {}, names = {}, sr
 function option(s, reference) {
   const half = 1.2816 * Math.sqrt(s.variance) * s.p * (1 - s.p);
   const all = Object.entries(s.terms)
+    .filter(([k]) => k !== 'mode') // the mode winrate is the number itself
     .map(([k, v]) => ({ label: LABELS[k], delta: toPoints(v, s.p) / 100 }))
     .filter((r) => Math.abs(r.delta) >= 0.005)
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   const reasons = all.filter((r) => Math.abs(r.delta) >= 0.01).slice(0, 2);
-  const record = s.personalGames ? ` · ${s.personalWins}/${s.personalGames} pour toi` : '';
+
   return {
     championId: Number(s.key),
     delta: s.p - reference.p,
@@ -122,6 +129,9 @@ function option(s, reference) {
     reasons,
     detail: all,
     vsId: reference !== s ? Number(reference.key) : null,
-    tag: `${s.tag}${record}`,
+    tag: s.tag,
+    record: s.personalGames ? { wins: s.personalWins, games: s.personalGames } : null,
+    tier: s.tier,
+    mine: Boolean(s.mine),
   };
 }

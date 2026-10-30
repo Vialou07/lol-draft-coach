@@ -1,5 +1,7 @@
 // Champion builds from u.gg (world, your rank bracket, your role): runes, starting items, core
 // items, items 4 to 6 and skill order, with games and wins. Fetched on demand, cached 12 hours.
+// Besides the most played build, u.gg keeps an AP, a tank and an AD variant per champion: the
+// game screen follows the one the player actually started.
 
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
 import { dataFile } from './paths.mjs';
@@ -13,6 +15,7 @@ export const RANK_CODES = {
 };
 export const DEFAULT_RANK = '10'; // platinum+, for unranked players
 export const ROLE_CODES = { top: '4', jungle: '1', mid: '5', bot: '3', support: '2' };
+export const VARIANTS = { default: 'overview', ap: 'ap-overview', tank: 'tank-overview', ad: 'ad-overview' };
 
 // Entry layout (index: content): 0 runes [games, wins, primary, secondary, perks], 1 spells,
 // 2 starting items, 3 core [games, wins, items], 4 skills [games, wins, order, priority],
@@ -38,12 +41,13 @@ export function compactBuild(raw, { rank, role }) {
   };
 }
 
-export async function loadBuild(key, { queue = 'ranked_solo_5x5', role = '', rank = DEFAULT_RANK, version }) {
+export async function loadBuild(key, { queue = 'ranked_solo_5x5', role = '', rank = DEFAULT_RANK, version, variant = 'default' }) {
   const [major, minor] = String(version).split('.');
   const patches = [`${major}_${minor}`, `${major}_${Number(minor) - 1}`];
   const roleCode = queue === 'normal_aram' ? '6' : ROLE_CODES[role] ?? '';
   const rankCode = queue === 'normal_aram' ? '8' : rank;
-  const file = dataFile('builds', `${queue}-${key}-${rankCode}-${roleCode || 'any'}.json`);
+  const page = VARIANTS[variant] ?? VARIANTS.default;
+  const file = dataFile('builds', `${queue}-${key}-${rankCode}-${roleCode || 'any'}${variant === 'default' ? '' : `-${variant}`}.json`);
   try {
     if (Date.now() - (await stat(file)).mtimeMs < MAX_AGE_MS) return JSON.parse(await readFile(file, 'utf8'));
   } catch {
@@ -51,12 +55,13 @@ export async function loadBuild(key, { queue = 'ranked_solo_5x5', role = '', ran
   }
   for (const patch of patches) {
     try {
-      const res = await fetch(`https://stats2.u.gg/lol/1.5/overview/${patch}/${queue}/${key}/1.5.0.json`, { signal: AbortSignal.timeout(15000) });
+      const res = await fetch(`https://stats2.u.gg/lol/1.5/${page}/${patch}/${queue}/${key}/1.5.0.json`, { signal: AbortSignal.timeout(15000) });
       if (!res.ok) continue;
       const build = compactBuild(await res.json(), { rank: rankCode, role: roleCode });
       if (!build) continue;
       build.queue = queue;
       build.patch = patch;
+      build.variant = variant;
       await mkdir(dataFile('builds'), { recursive: true });
       await writeFile(file, JSON.stringify(build));
       return build;

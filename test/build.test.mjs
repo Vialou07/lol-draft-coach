@@ -81,3 +81,18 @@ test('alternatives: other choices at that slot with enough games, and the strong
   assert.ok(a.alternatives[0].reason, 'first alternative answers their team');
   for (const alt of a.alternatives.slice(1)) assert.ok(alt.games >= 300 && alt.winrate > 0.3 && alt.winrate < 0.7);
 });
+
+test('the build follows what you started: AP Galio gets the AP build, not the tank one', () => {
+  const game = read('./fixtures/live-galio-ap.json'); // a real ARAM Mayhem game: Luden and Shadowflame on Galio
+  const builds = read('./fixtures/build-galio-aram.json');
+  const a = adviseBuild(game, { builds, items, info, physOf });
+  assert.equal(a.style.started, 'ap');
+  assert.equal(a.source.variant, 'ap', 'AP variant of u.gg');
+  assert.deepEqual(a.path.slice(0, 2).map((p) => p.owned), [true, true], 'your own items first');
+  assert.ok(a.path.slice(2).every((p) => !p.owned && items[p.item].tags.includes('SpellDamage') || items[p.item].tags.includes('Boots')), 'only AP items and boots next');
+  assert.equal(a.buy.for, 3020, 'basic boots and two items done: finish the boots (Sorcerer)');
+  assert.ok(!a.path.some((p) => p.item === 3084), 'no Heartsteel');
+  const fresh = structuredClone(game);
+  fresh.allPlayers[9].items = [];
+  assert.equal(adviseBuild(fresh, { builds, items, info, physOf }).source.variant, 'default', 'nothing bought yet: the most played build');
+});

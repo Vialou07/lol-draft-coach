@@ -108,11 +108,14 @@ test('ARAM Mayhem: every real game gets a keep-or-swap advice over my champion a
     const advice = recommend(draft, { stats, profile, champions, info });
     const me = draft.allies.find((p) => p.me);
     assert.equal(advice.current.championId, me.championId, 'my champion is the reference');
-    for (const o of advice.options) assert.ok(draft.bench.includes(o.championId), 'options come from the bench');
-    if (advice.verb === 'Prends sur le banc') {
+    assert.ok(advice.options.some((o) => o.mine && o.championId === me.championId), 'my champion is in the list');
+    for (const o of advice.options) if (!o.mine) assert.ok(draft.bench.includes(o.championId), 'the others come from the bench');
+    assert.equal(advice.options[0].championId, advice.focus, 'the advice comes first');
+    if (advice.verb === 'Prends') {
       swaps++;
       assert.ok(advice.options[0].delta >= 0.01, 'a swap is worth at least a point');
     } else {
+      assert.equal(advice.focus, me.championId);
       assert.ok(advice.options.every((o) => o.delta < 0.01), 'nothing on the bench beats my champion');
     }
   }
@@ -141,11 +144,13 @@ test('ARAM Mayhem: with mode winrates, a much stronger bench champion is advised
     bench: [Number(strong), Number(second)], allyBanHovers: [],
   };
   const advice = recommend(draft, { stats, profile: {}, champions, info });
-  assert.equal(advice.verb, 'Prends sur le banc');
+  assert.equal(advice.verb, 'Prends');
   assert.equal(advice.options[0].championId, Number(strong));
-  assert.equal(advice.current.championId, Number(weak), 'my champion stays shown for comparison');
+  assert.ok(Math.abs(advice.options[0].p - stats.mayhem.champs[strong].wr) < 0.03, 'the number is close to the mode winrate');
+  assert.ok(advice.options.some((o) => o.mine && o.championId === Number(weak)), 'my champion stays shown for comparison');
   const notOwned = recommend(draft, { stats, profile: {}, champions, info, owned: [Number(weak), Number(second)] });
   assert.equal(notOwned.options[0].championId, Number(second), 'unowned bench champion skipped');
+  assert.ok(!notOwned.options.some((o) => o.championId === Number(strong)));
 });
 
 test('ARAM: an ownership list that would hide the whole bench is ignored', () => {
@@ -180,6 +185,23 @@ test('ARAM team: the shared bench is split, never the same champion for two play
     });
     const assigned = assignBench(views).map((v) => v.advice?.assigned).filter(Boolean);
     assert.equal(new Set(assigned).size, assigned.length, `${f}: a bench champion given twice`);
+  }
+});
+
+test('ARAM team: the PC owner keeps their best bench choice, never marked as for someone else', async () => {
+  const { assignBench } = await import('../companion/team.mjs');
+  for (const f of readdirSync(dir).filter((f) => f.startsWith('q2400')).slice(0, 25)) {
+    const g = read(`./fixtures/real/${f}`);
+    const session = g.events.find((e) => e.session.timer.phase === 'FINALIZATION')?.session ?? g.events.at(-1).session;
+    const views = session.myTeam.map((p) => {
+      const draft = draftState({ ...session, localPlayerCellId: p.cellId });
+      return { name: p.anonName, self: p.cellId === session.localPlayerCellId, draft, advice: recommend(draft, { stats, profile: { unknown: true }, champions, info }) };
+    });
+    const own = views.find((v) => v.self);
+    if (!own?.advice?.options) continue;
+    const mine = assignBench(views).find((v) => v.self).advice;
+    assert.equal(mine.focus, own.advice.focus, `${f}: own advice unchanged`);
+    assert.ok(mine.options.every((o) => !o.takenBy), `${f}: nothing marked for an ally`);
   }
 });
 
