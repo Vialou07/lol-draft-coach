@@ -30,7 +30,7 @@ function qrSvg(text) {
 
 export function startServer({ port, host = '0.0.0.0', snapshot, icon = async () => null, actions = {} }) {
   let boundPort = port;
-  const server = http.createServer(async (req, res) => {
+  const handle = async (req, res) => {
     const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     if (path === '/state') {
       res.writeHead(200, { 'Content-Type': TYPES['.json'], 'Cache-Control': 'no-store' });
@@ -72,7 +72,12 @@ export function startServer({ port, host = '0.0.0.0', snapshot, icon = async () 
     } catch {
       res.writeHead(404).end();
     }
-  });
+  };
+  // A malformed address (a stray "%" typed on the phone) must never end the companion.
+  const server = http.createServer((req, res) => handle(req, res).catch(() => {
+    if (!res.headersSent) res.writeHead(400);
+    res.end();
+  }));
 
   const wss = new WebSocketServer({ server, path: '/ws' });
   wss.on('error', () => {}); // listen errors are reported by the promise below

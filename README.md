@@ -39,11 +39,17 @@ Si quelque chose coince, le journal est dans `data/local/companion.log` (ou `%LO
   « Contrable » si un counter courant fait mal, les pièges de la draft, tes champions à apprendre, et
   l'analyse complète (lane, autres matchups, duos, dégâts, tanks, engage, protection, durée de partie).
   Un tap sur une carte montre le détail et l'écart face à ton champion habituel.
-- **ARAM du Chaos** : les meilleurs champions du banc que tu possèdes, comparés à ton champion actuel.
+- **ARAM du Chaos** : « Prends X » ou « Garde X », d'après le winrate du mode tel que la source le publie ; un
+  changement seulement pour au moins un point. Le banc est partagé entre toi et tes amis de la partie.
 - **Arena** : reconnue, pas encore de conseils.
 - **En partie** : quoi acheter avec tes golds, ton build habituel à ton rang (u.gg), les items que leur compo demande
-  (soins, très AD ou AP, tanks), l'ordre des sorts. Via l'API officielle de Riot (Live Client Data).
-- **Ton profil** : tes champions, tes bons et mauvais matchups de lane, lus dans l'historique du client.
+  (soins, très AD ou AP, tanks), l'ordre des sorts. Le combat en nombre (« 5 contre 3, encore 9 s »), l'écart d'or
+  en items au fil de la partie avec les kills, les moments clés (gros items, multikills, inhibiteurs, dragons et
+  Baron sur la Faille avec leur repop). Via l'API officielle de Riot (Live Client Data).
+- **Après la partie** : dégâts aux champions, dégâts encaissés, soins et or des dix joueurs, et tes augments, lus
+  dans le détail de partie du client. Riot ne publie pas les dégâts ni les soins pendant la partie.
+- **Ton profil** : tes dernières parties, tes champions, tes bons et mauvais matchups de lane. Le client ne garde
+  que tes 20 dernières parties : l'appli garde chaque partie vue (sur ton PC), les remakes ne comptent pas.
 - **Mode groupe** : la page publique suit la draft de chacun par un relais chiffré ; la clé n'est que dans le lien.
 
 ## Règles du projet
@@ -53,8 +59,8 @@ Si quelque chose coince, le journal est dans `data/local/companion.log` (ou `%LO
 - Seulement ce que le client montre au joueur : un champion adverse compte une fois verrouillé (les
   données du client contiennent parfois le survol adverse, il est ignoré exprès), les joueurs masqués en
   ranked ne sont jamais identifiés.
-- Toujours plusieurs choix, jamais un seul « prends X » (règle Riot contre les applis qui dictent).
-- Pas de winrates d'augments ; en partie, seulement le build et ce que le tableau des scores montre, sans alerte.
+- Le titre dit quoi faire (« Prends X », « Bannis X », « Achète X ») et les autres choix restent affichés à côté.
+- En partie, seulement ce que le tableau des scores et les événements officiels montrent, sans alerte sonore.
 - Chaque chiffre indique sa source ; ce qui n'est que du bruit n'est pas affiché.
 
 ## Données et limites
@@ -63,7 +69,9 @@ Si quelque chose coince, le journal est dans `data/local/companion.log` (ou `%LO
 |---|---|---|
 | Draft | Jeux de données publics de DraftGap (Lolalytics, Emerald+, toutes régions, 30 jours + patch) | Lolalytics n'a pas publié de conditions : accord écrit à demander avant d'ouvrir aux potes |
 | ARAM du Chaos | arammayhem.com (serveurs chinois) | Pas de nombre de parties publié ; Riot ne sert pas ces parties dans son API |
-| Perso | Client local (historique, maîtrise, rang) | Quelques dizaines à 200 parties seulement |
+| Perso | Client local (historique, maîtrise, rang) | Le client sert 20 parties ; l'appli garde les suivantes |
+| En partie | Live Client Data (API officielle, 127.0.0.1:2999) | Pas de dégâts, soins, or des autres ni recharges |
+| Après la partie | Détail de partie du client | Disponible quelques secondes après la fin |
 
 Le modèle (détails dans `docs/etudes/04` et `07`) additionne en log-odds : force du champion sur le patch,
 matchup de lane, duo bot + support, malus d'expérience (environ −6 points jamais joué, −3 points sous
@@ -76,7 +84,7 @@ properties are trademarks or registered trademarks of Riot Games, Inc.
 ## Développement
 
 ```
-npm test                                       # 42 tests, sans réseau ni client LoL
+npm test                                       # 60 tests, sans réseau ni client LoL
 npm run build:exe                              # dist/LolDraftCoach.exe (Node SEA, environ 90 Mo)
 npm run demo -- q2400-2026-10-24-40.json       # rejoue une vraie partie dans la page
 node tools/extract-log-sessions.mjs            # transforme les logs du client en cas de test anonymisés

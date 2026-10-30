@@ -1,6 +1,6 @@
 // The companion: follows the League client, decodes champ select and serves the live page.
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, appendFile, mkdir } from 'node:fs/promises';
 import { findClient, get, getBinary, tryGet, subscribe, TOPICS } from './lcu.mjs';
 import { draftState, draftKey } from './draft.mjs';
 import { startServer } from './server.mjs';
@@ -23,6 +23,8 @@ import { adviseBuild, championKeyOf } from './advise-build.mjs';
 import { loadBuild, RANK_CODES, DEFAULT_RANK, VARIANTS } from './stats-builds.mjs';
 import { loadItems } from './items.mjs';
 import { createDraftModel } from './model-draft.mjs';
+import { trackLive } from './live-track.mjs';
+import { gameRecap, augmentInfo } from './recap.mjs';
 
 const RETRY_MS = 3000;
 // Demos replay real recorded champ selects (anonymised fixtures) so the page can be seen
@@ -33,6 +35,12 @@ const DEMOS = {
 };
 const DEMO_SPEED = 1.5;
 const LIVE_POLL_MS = 3000;
+const BUILD_RETRY_MS = 30000;
+const IN_GAME = ['ChampSelect', 'GameStart', 'InProgress', 'Reconnect'];
+const RECORD_EVERY = 15; // seconds of game time between two reads kept in live-last.jsonl
+const RECAP_TRIES = 12; // the client files the game a few seconds after the end
+const RECAP_WAIT_MS = 10000;
+const UPDATE_RETRY_MS = 3600 * 1000;
 // With the client closed the demo has no personal data, which would rate every champion as
 // never played: a sample support pool stands in, and the page says so.
 const SAMPLE_PROFILE = {
@@ -79,7 +87,7 @@ const defaultStats = async ({ onLog, info }) => {
   return { draft, mayhem };
 };
 
-export async function startCompanion({ port = 4317, host, lockfile, onLog = () => {}, loadStats = defaultStats, loadInfo = loadChampionInfo, loadAttrs = loadAttributes, loadElo = loadEloStats, share = true, readLive = readLiveGame, getBuild = loadBuild, getItems = loadItems } = {}) {
+export async function startCompanion({ port = 4317, host, lockfile, onLog = () => {}, loadStats = defaultStats, loadInfo = loadChampionInfo, loadAttrs = loadAttributes, loadElo = loadEloStats, share = true, readLive = readLiveGame, getBuild = loadBuild, getItems = loadItems, livePollMs = LIVE_POLL_MS } = {}) {
   const state = {
     status: 'no-client',
     gameflow: 'None',
@@ -118,9 +126,13 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   let lastPick = null; // { kind, role } of the last champ select, for the in-game build
   let liveTimer = null;
   let liveBuild = null; // { key, builds: { default, ap, tank, ad } }
+  let liveTrack = null; // the game followed over time: gold curve, kills, feed
+  let lastGameId = null;
+  let augments = null;
   let rawSession = null; // last champ select payload, to compute each ally's own advice
   let aramViews = null; // ARAM: the whole team's views, with the shared bench split between players
   const friendProfiles = new Map();
+  let friends = new Set(); // puuids from the client's friend list
 
   // Group sharing: friends follow their own draft on their phone through the group link.
   let group = share ? await loadGroup().catch(() => null) : null;
@@ -136,6 +148,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       '/demo/ranked': () => startDemo('ranked'),
       '/demo/aram': () => startDemo('aram'),
       '/demo/game': () => startGameDemo(),
+      '/demo/recap': () => startRecapDemo(),
       '/demo/stop': () => stopDemo(),
       // A friend's companion joins the host's group by pasting the group link once.
       '/group/join': async (input) => {
@@ -183,7 +196,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
           // one ally's view must not break the others
         }
         const name = visible ? p.gameName : p.anonName ?? `Allié ${ROLE_LABELS[p.assignedPosition] ?? ''}`.trim();
-        return { cellId: p.cellId, name, self: false, draft, advice };
+        return { cellId: p.cellId, name, self: false, friend: Boolean(p.puuid && friends.has(p.puuid)), draft, advice };
       });
   };
 
@@ -193,7 +206,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       ? []
       : aramViews ?? [{ cellId: state.draft.allies.find((p) => p.me)?.cellId, name: state.summoner?.gameName ?? 'Moi', self: true, draft: state.draft, advice: state.advice }, ...allyViews()];
     const ids = new Set();
-    JSON.stringify([views, state.game, state.plan], (k, v) => {
+    JSON.stringify([views, state.game, state.plan, state.recap], (k, v) => {
       if (/^(championId|hoverId|opponentId|vsId)$/.test(k) && v > 0) ids.add(String(v));
       if (k === 'bench' || k === 'ally' || k === 'enemy' || k === 'healers') v?.forEach?.((id) => ids.add(String(id)));
       return v;
@@ -210,6 +223,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       views,
       game: state.game,
       plan: ['GameStart', 'InProgress'].includes(state.gameflow) ? state.plan : null,
+      recap: state.status === 'champ-select' ? null : state.recap ?? null,
     };
   };
 
@@ -257,9 +271,10 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     const mode = live.gameData?.gameMode ?? '';
     if (mode === 'CHERRY') return; // Arena: no build source yet
     const queue = lastPick?.kind === 'aram' || /ARAM|KIWI/.test(mode) ? 'normal_aram' : 'ranked_solo_5x5';
-    if (liveBuild?.key !== key) {
+    const retry = liveBuild?.key === key && !Object.keys(liveBuild.builds).length && Date.now() - liveBuild.at > BUILD_RETRY_MS;
+    if (liveBuild?.key !== key || retry) {
       // The most played build and its AP, tank and AD variants: the advice follows what you buy.
-      liveBuild = { key, builds: {} };
+      liveBuild = { key, builds: {}, at: Date.now() };
       const role = lastPick?.role || LIVE_ROLES[me.position] || '';
       const rank = RANK_CODES[profile?.rank?.tier] ?? DEFAULT_RANK;
       const names = Object.keys(VARIANTS);
@@ -272,17 +287,31 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     }
     const advice = adviseBuild(live, { builds: liveBuild.builds, items, info, physOf });
     if (!advice) return;
+    liveTrack = trackLive(liveTrack, live, { items, championOf: (p) => Number(championKeyOf(p, info)) || null });
     const ids = new Set([...advice.path.map((p) => p.item), ...advice.adapt.map((a) => a.item), ...advice.alternatives.map((a) => a.item), advice.buy?.item, advice.buy?.for].filter(Boolean));
-    state.game = { ...advice, itemNames: Object.fromEntries([...ids].map((id) => [id, items[id]?.name ?? String(id)])) };
+    state.game = { ...advice, itemNames: Object.fromEntries([...ids].map((id) => [id, items[id]?.name ?? String(id)])), live: liveTrack?.view ?? null, at: Date.now() };
     changed();
+  };
+
+  // The last game, one read every RECORD_EVERY seconds, kept on this PC only: it lets a real
+  // game be replayed to check the in-game screen.
+  let recordedAt = null;
+  const record = async (live) => {
+    const t = live.gameData?.gameTime ?? 0;
+    if (recordedAt != null && t >= recordedAt && t - recordedAt < RECORD_EVERY) return;
+    const fresh = recordedAt == null || t < recordedAt;
+    recordedAt = t;
+    await mkdir(dataFile(), { recursive: true });
+    await (fresh ? writeFile : appendFile)(dataFile('live-last.jsonl'), `${JSON.stringify(live)}\n`);
   };
 
   const startLive = () => {
     if (liveTimer) return;
     const poll = async () => {
       const live = await readLive();
+      if (live) record(live).catch(() => {});
       if (live) await adviseLive(live).catch((e) => onLog(`Build en partie : ${e.message}`));
-      liveTimer = setTimeout(poll, LIVE_POLL_MS);
+      liveTimer = setTimeout(poll, livePollMs);
     };
     poll();
   };
@@ -290,10 +319,40 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     clearTimeout(liveTimer);
     liveTimer = null;
     liveBuild = null;
+    liveTrack = null;
+    recordedAt = null;
     if (state.game) {
       state.game = null;
       changed();
     }
+  };
+
+  // After the game: the client's own game details (damage, healing, augments), for the recap.
+  const augmentNames = async () => {
+    augments ??= client ? augmentInfo(await tryGet(client, '/lol-game-data/assets/v1/cherry-augments.json')) : {};
+    return augments;
+  };
+  const fetchRecap = async (c, gameId) => {
+    for (let i = 0; i < RECAP_TRIES && gameId && !stopped; i++) {
+      const detail = await tryGet(c, `/lol-match-history/v1/games/${gameId}`);
+      if (detail?.participants?.length) {
+        const me = await tryGet(c, '/lol-summoner/v1/current-summoner');
+        state.recap = gameRecap(detail, { puuid: me?.puuid, augments: await augmentNames() });
+        if (state.recap) {
+          onLog(`Récap de la partie ${gameId} : ${state.recap.win ? 'victoire' : 'défaite'}`);
+          changed();
+        }
+        return;
+      }
+      await new Promise((r) => setTimeout(r, RECAP_WAIT_MS));
+    }
+  };
+  const startRecapDemo = async () => {
+    if (state.status === 'champ-select' || IN_GAME.includes(state.gameflow)) return { error: 'Une partie est en cours.' };
+    const detail = JSON.parse(await readAsset('test/fixtures/game-detail-galio.json'));
+    state.recap = { ...gameRecap(detail, { puuid: 'me', augments: await augmentNames() }), demo: true };
+    changed();
+    return { ok: true };
   };
 
   // Demo of the in-game screen: a recorded-format sample game.
@@ -312,7 +371,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     };
     await adviseLive(live);
     setTimeout(() => {
-      if (state.demo?.name !== 'game') return;
+      if (state.demo?.name !== 'game' || state.status === 'champ-select') return;
       Object.assign(state, { demo: null, game: null, plan: null, status: client ? 'connected' : 'no-client' });
       liveBuild = null;
       changed();
@@ -380,13 +439,14 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
 
   // The final read of the draft becomes the game plan, shown from the loading screen on.
   const keepPlan = () => {
-    const an = state.advice?.analysis;
+    const mine = state.draft?.allies.find((p) => p.me)?.championId;
+    const an = (mine && state.advice?.analysisFor?.[mine]) ?? state.advice?.analysis;
     if (!state.draft || !an) return;
     state.plan = { championId: an.championId, kind: state.draft.kind, lane: an.lane ?? null, timing: an.timing ?? null, needs: an.needs ?? [], teams: an.teams ?? null };
   };
 
   const onSession = (session) => {
-    if (demo) stopDemo(); // a real champ select always wins over a demo
+    if (demo || state.demo) stopDemo(); // a real champ select always wins over a demo
     const fresh = state.status !== 'champ-select';
     if (fresh) state.plan = null;
     rawSession = session;
@@ -397,6 +457,13 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     state.status = 'champ-select';
     if (fresh) {
       pickable = null;
+      state.recap = null;
+      tryGet(client, '/lol-chat/v1/friends').then((list) => {
+        if (!Array.isArray(list) || state.status !== 'champ-select') return;
+        friends = new Set(list.map((f) => f.puuid).filter(Boolean));
+        advise();
+        changed();
+      });
       // Friends visible in the lobby: read their profile as the client shows it, once.
       for (const p of session.myTeam ?? []) {
         if (p.cellId === session.localPlayerCellId || p.nameVisibilityType === 'HIDDEN' || !p.puuid || friendProfiles.has(p.puuid)) continue;
@@ -442,13 +509,20 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       lastPick = { kind: state.draft.kind, role: me?.role ?? '' };
       if (phase !== 'ChampSelect') keepPlan();
     }
-    if (!['ChampSelect', 'GameStart', 'InProgress'].includes(phase)) state.plan = null;
+    if (!IN_GAME.includes(phase)) state.plan = null;
     state.gameflow = phase;
-    if (phase === 'InProgress') startLive();
-    else stopLive();
+    if (phase === 'InProgress' || phase === 'Reconnect') {
+      startLive();
+      if (!lastGameId) tryGet(client, '/lol-gameflow/v1/session').then((s) => (lastGameId = s?.gameData?.gameId ?? null));
+    } else stopLive();
+    if (lastGameId && !IN_GAME.includes(phase) && phase !== 'GameStart') {
+      fetchRecap(client, lastGameId);
+      lastGameId = null;
+    }
     maybeInstall();
     if (demo && phase !== 'ChampSelect') return changed();
     if (demo) stopDemo();
+    if (!IN_GAME.includes(phase)) state.queue = null;
     if (phase === 'ChampSelect') {
       const flow = await tryGet(client, '/lol-gameflow/v1/session');
       const q = flow?.gameData?.queue;
@@ -459,6 +533,11 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       state.draft = null;
       state.advice = null;
       lastDraftKey = '';
+    }
+    if (phase === 'ChampSelect' && rawSession && state.status === 'champ-select') {
+      // The queue arrived after the first session event: read the draft again with it.
+      lastDraftKey = '';
+      onSession(rawSession);
     }
     if (phase === 'EndOfGame') refreshProfile(client);
     changed();
@@ -548,14 +627,21 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   // Self-update (the .exe only): never during a champ select or a game.
   let pendingUpdate = null;
   let installing = false;
-  const busy = () => state.status === 'champ-select' || ['ReadyCheck', 'ChampSelect', 'GameStart', 'InProgress'].includes(state.gameflow);
+  const busy = () => state.status === 'champ-select' || ['ReadyCheck', 'ChampSelect', 'GameStart', 'InProgress', 'Reconnect', 'Matchmaking'].includes(state.gameflow);
+  let failedAt = 0;
   const maybeInstall = async () => {
-    if (!pendingUpdate || installing || busy()) return;
+    if (!pendingUpdate || installing || busy() || Date.now() - failedAt < UPDATE_RETRY_MS) return;
     installing = true;
     state.update = { version: pendingUpdate.version, status: 'installing' };
     changed();
     try {
       await installUpdate(pendingUpdate);
+      if (busy()) {
+        // A game started during the download: restart after it.
+        installing = false;
+        state.update = { version: pendingUpdate.version, status: 'ready' };
+        return changed();
+      }
       onLog(`Mise à jour ${pendingUpdate.version} installée, redémarrage.`);
       state.update = { version: pendingUpdate.version, status: 'restarting' };
       changed();
@@ -569,6 +655,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       onLog(`Mise à jour impossible : ${e.message}`);
       state.update = { version: pendingUpdate.version, status: 'failed' };
       installing = false;
+      failedAt = Date.now();
       changed();
     }
   };

@@ -35,6 +35,10 @@ export function itemStyle(item) {
   return null;
 }
 const isBoots = (item) => Boolean(item?.tags?.includes('Boots'));
+// The support quest line (World Atlas and what it becomes) is one slot, earned, never bought.
+const isSupportQuest = (id) => id >= 3865 && id <= 3877;
+// ARAM modes sell their own copies of some items (126697 for 6697): read them as the original.
+const baseItem = (id, items) => (id >= 120000 && id < 130000 && items[id - 120000] ? id - 120000 : id);
 
 // The style a set of items leans to: finished items count fully, big components a little.
 function leaning(ids, items, minWeight) {
@@ -73,9 +77,10 @@ export function championKeyOf(player, info) {
 }
 
 export function adviseBuild(live, { build: only, builds = { default: only }, items, info, physOf = () => null }) {
-  const players = live?.allPlayers ?? [];
+  const players = (live?.allPlayers ?? []).map((p) => ({ ...p, items: (p.items ?? []).map((i) => ({ ...i, itemID: baseItem(i.itemID, items) })) }));
+  // Spectating has no active player: nothing to advise.
   const meId = live?.activePlayer?.riotId ?? live?.activePlayer?.summonerName;
-  const me = players.find((p) => p.riotId === meId || p.summonerName === meId) ?? players[0];
+  const me = meId ? players.find((p) => p.riotId === meId || p.summonerName === meId) : null;
   if (!me) return null;
   const key = championKeyOf(me, info);
   const gold = Math.floor(live.activePlayer?.currentGold ?? 0);
@@ -143,14 +148,15 @@ export function adviseBuild(live, { build: only, builds = { default: only }, ite
   // Your own items come first: any finished boots stand for the build's boots, and finished
   // items outside this build still take a slot.
   const ownedBoots = ownedIds.find((id) => isBoots(items[id]) && items[id].cost > 300);
+  const ownedQuest = ownedIds.find(isSupportQuest);
   const plan = [];
   for (const id of usual) {
     if (!items[id]) continue;
-    const slotItem = isBoots(items[id]) && ownedBoots ? ownedBoots : id;
+    const slotItem = isBoots(items[id]) && ownedBoots ? ownedBoots : isSupportQuest(id) ? ownedQuest ?? id : id;
     if (!plan.includes(slotItem)) plan.push(slotItem);
   }
-  const extras = ownedIds.filter((id) => items[id] && items[id].cost >= COMPLETED && !isBoots(items[id]) && !plan.includes(id));
-  const todo = plan.filter((id) => !owned.has(id));
+  const extras = ownedIds.filter((id) => items[id] && items[id].cost >= COMPLETED && !isBoots(items[id]) && !isSupportQuest(id) && !plan.includes(id));
+  const todo = plan.filter((id) => !owned.has(id) && !isSupportQuest(id));
   // Next: finish basic boots once an item is done, else the first two items of the path,
   // the one you already hold parts of first.
   const parts = (id) => (items[id]?.from ?? []).flatMap((c) => [c, ...parts(c)]);
@@ -213,6 +219,7 @@ export function adviseBuild(live, { build: only, builds = { default: only }, ite
     nextStats: nextStats && nextStats.games >= MIN_SLOT_GAMES ? { winrate: nextStats.wins / nextStats.games, games: nextStats.games } : null,
     alternatives: alternatives.slice(0, 3),
     path: path.map((id) => ({ item: id, owned: owned.has(id) })),
+    noBuild: !build,
     style: started || build?.variant
       ? { started: started ?? null, name: STYLE_NAMES[started] ?? null, followed, missing: Boolean(missing), variant: build?.variant ?? 'default' }
       : null,

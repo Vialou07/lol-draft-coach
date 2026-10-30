@@ -8,6 +8,7 @@ const PAGE = 20;
 const MAX_GAMES = 200;
 const SR_QUEUES = new Set([400, 420, 430, 440, 480, 490, 700]);
 const REMAKE_SECONDS = 240;
+const RECENT = 12; // last games shown as a strip on the waiting screen
 const matchupCache = () => dataFile('history-matchups.json');
 const historyFile = () => dataFile('history.json');
 
@@ -35,7 +36,7 @@ async function keptHistory(games, owner) {
     await mkdir(dataFile(), { recursive: true });
     await writeFile(historyFile(), JSON.stringify(all));
   }
-  return Object.entries(kept).map(([gameId, [queueId, championId, win]]) => ({ gameId, queueId, championId, win }));
+  return Object.entries(kept).map(([gameId, [queueId, championId, win, at]]) => ({ gameId, queueId, championId, win, at }));
 }
 
 async function recentGames(client, who, max) {
@@ -119,7 +120,7 @@ export async function buildProfile(client, { puuid, maxGames = MAX_GAMES } = {})
     unique.push(g);
   }
   // Your own games add up across sessions; another player's are read as the client shows them.
-  const row = (g) => ({ gameId: g.gameId, queueId: g.queueId, championId: g.participants[0].championId, win: g.participants[0].stats?.win ? 1 : 0 });
+  const row = (g) => ({ gameId: g.gameId, queueId: g.queueId, championId: g.participants[0].championId, win: g.participants[0].stats?.win ? 1 : 0, at: g.gameCreation ?? 0 });
   const me = puuid ? null : await tryGet(client, '/lol-summoner/v1/current-summoner');
   const rows = me?.puuid ? await keptHistory(unique, me.puuid).catch(() => unique.map(row)) : unique.map(row);
   for (const r of rows) {
@@ -137,6 +138,7 @@ export async function buildProfile(client, { puuid, maxGames = MAX_GAMES } = {})
     matchups,
     rank: solo?.tier && solo.tier !== 'NONE' ? { tier: solo.tier, division: solo.division } : null,
     gamesRead: rows.length,
+    recent: rows.filter((r) => r.at).sort((a, b) => b.at - a.at).slice(0, RECENT).map(({ championId, queueId, win, at }) => ({ championId, queueId, win: Boolean(win), at })),
   };
 }
 
@@ -163,6 +165,7 @@ export function profileSummary(profile) {
   return {
     gamesRead: profile.gamesRead,
     rank: profile.rank,
+    recent: profile.recent ?? [],
     comfort,
     aram,
     favorable: pairs.filter((p) => p.score > 0.5).slice(0, 3),

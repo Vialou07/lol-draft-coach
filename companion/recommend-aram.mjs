@@ -9,8 +9,9 @@
 import { createDraftModel, sigmoid } from './model-draft.mjs';
 
 const N0_MODE = 1000; // pseudo-games pulling a counted mode winrate towards 50 % [assumption]
-const ASSUMED_GAMES = 3000; // the source publishes no sample size, only for the range [assumption]
-const SWITCH_THRESHOLD = 0.01; // advise a bench swap only above one point of winrate
+const SWITCH_THRESHOLD = 0.01; // advise a bench swap only from one point of winrate
+// Gaps are compared as the page shows them, to a tenth of a point: "+1,0 pt" is one point.
+export const shownGap = (x) => Math.round(x * 1000) / 1000;
 const PHYSICAL_TEAM = 0.7; // average physical share above which a team lacks magic damage
 
 let srCache = { stats: null, model: null };
@@ -27,7 +28,8 @@ export function recommendAram(draft, { stats, info = {}, srStats, owned }) {
     const rec = stats?.champs?.[key];
     if (!rec) return { value: 0, variance: 0, games: 0 };
     const p = rec.games ? (rec.wr * rec.games + N0_MODE * 0.5) / (rec.games + N0_MODE) : rec.wr;
-    return { value: Math.log(p / (1 - p)), variance: 4 / ((rec.games ?? ASSUMED_GAMES) + N0_MODE), games: rec.games ?? 0 };
+    // Without a published sample size there is no honest range to draw.
+    return { value: Math.log(p / (1 - p)), variance: rec.games ? 4 / (rec.games + N0_MODE) : 0, games: rec.games ?? 0 };
   };
   // Physical damage share from the champion's main Summoner's Rift role, when available.
   const phys = (key) => {
@@ -66,7 +68,7 @@ export function recommendAram(draft, { stats, info = {}, srStats, owned }) {
   const bench = (usable.length ? usable : draft.bench)
     .map((id) => score(String(id), 'Banc'))
     .sort((a, b) => b.p - a.p);
-  const swap = bench.length > 0 && bench[0].p - mine.p >= SWITCH_THRESHOLD;
+  const swap = Boolean(stats) && bench.length > 0 && shownGap(bench[0].p - mine.p) >= SWITCH_THRESHOLD;
   const focus = swap ? bench[0] : mine;
   const all = [mine, ...bench];
   // One list: the advice first, then the others by strength, your champion always in it.
@@ -104,8 +106,8 @@ export function recommendAram(draft, { stats, info = {}, srStats, owned }) {
     current: option(mine, mine),
     analysis,
     analysisFor,
-    flat: spread < 0.005,
-    note: spread < 0.005 ? `Rien ne départage ces champions pour l'instant. ${sourceNote}` : sourceNote,
+    flat: !stats || spread < 0.005,
+    note: !stats || spread >= 0.005 ? sourceNote : `Rien ne départage ces champions pour l'instant. ${sourceNote}`,
   };
 }
 

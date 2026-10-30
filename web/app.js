@@ -2,6 +2,8 @@
 // companion over a websocket; opened from the group link (#g=…&k=…) it follows the group
 // through the encrypted relay, and each friend picks whose draft to show.
 
+import { Idiomorph } from './vendor/idiomorph.esm.js';
+
 const app = document.getElementById('app');
 const linkLost = document.getElementById('link');
 
@@ -12,6 +14,7 @@ const QUEUES = {
 const COLS = ['top', 'jungle', 'mid', 'bot', 'support'];
 const COL_LABELS = { top: 'TOP', jungle: 'JGL', mid: 'MID', bot: 'ADC', support: 'SUP' };
 const ROLE_NAMES = { top: 'Top', jungle: 'Jungle', mid: 'Mid', bot: 'ADC', support: 'Support' };
+const RANKS = { IRON: 'Fer', BRONZE: 'Bronze', SILVER: 'Argent', GOLD: 'Or', PLATINUM: 'Platine', EMERALD: 'Émeraude', DIAMOND: 'Diamant', MASTER: 'Maître', GRANDMASTER: 'Grand maître', CHALLENGER: 'Challenger' };
 const DDRAGON = '16.21.1';
 const SCALE = [0.42, 0.62]; // every gauge shares one scale, so gaps between cards are visible
 const LEGAL = 'LoL Draft Coach isn’t endorsed by Riot Games and doesn’t reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.';
@@ -33,6 +36,7 @@ const storage = {
 
 let state = null;
 let lastKey = '';
+let lastHeadline = '';
 let deadline = null;
 let phaseTotal = null;
 let phone = null;
@@ -64,18 +68,45 @@ const pts = (x, digits = 1) => {
 const trend = (x, min = 0.05) => (x * 100 >= min ? 'up' : x * 100 <= -min ? 'down' : 'flat');
 const pct = (x) => `${Math.round(x * 100)} %`;
 
+// The headline is the answer: what to do now, and with which champion.
 function headline(d, a, me) {
-  if (d.kind === 'aram') return a?.focus ? { text: `${a.verb} ${champName(a.focus)}`, mine: a.verb === 'Prends' } : { text: a?.verb ?? 'ARAM', mine: false };
+  const top = a?.options?.[0];
+  const name = top ? champName(top.championId) : '';
+  if (d.kind === 'aram') {
+    if (!a?.focus) return { text: a?.verb ?? 'ARAM', mine: false };
+    return a.flat ? { text: champName(a.focus), mine: false } : { text: `${a.verb} ${champName(a.focus)}`, mine: a.verb === 'Prends' };
+  }
   if (d.kind === 'arena') return { text: 'Arena', mine: false };
-  if (d.myTurn === 'pick') return { text: 'À toi', mine: true };
-  if (d.myTurn === 'ban') return { text: 'Ton ban', mine: true };
-  if (d.phase === 'FINALIZATION' || d.phase === 'GAME_STARTING') return { text: 'Finalisation', mine: false };
-  if (me?.championId) return { text: 'Verrouillé', mine: false };
-  if (d.phase === 'PLANNING') return { text: 'Déclare ton pick', mine: false };
+  if (d.myTurn === 'pick') return { text: top ? `Prends ${name}` : 'À toi', mine: true };
+  if (d.myTurn === 'ban') return { text: top ? `Bannis ${name}` : 'Ton ban', mine: true };
+  if (me?.championId) {
+    const mine = a?.options?.find((o) => o.championId === me.championId);
+    return { text: mine?.p != null ? `${champName(me.championId)} · ${pct(mine.p)}` : champName(me.championId), mine: false };
+  }
+  if (d.phase === 'PLANNING') return { text: top ? `Déclare ${name}` : 'Déclare ton pick', mine: false };
   return { text: d.acting === 'enemy' ? 'Les adversaires choisissent' : 'Prépare ton pick', mine: false };
 }
 
+// The line under the headline: whose turn it is, then the role and the queue.
+function turnNote(d, a) {
+  if (d.kind === 'aram') return aramWhy(a);
+  if (d.myTurn === 'pick') return 'à toi de choisir';
+  if (d.myTurn === 'ban') return Math.max(...(a?.options ?? []).map((o) => o.gain ?? 0)) < 0.01 ? 'à toi de bannir · effet faible, moins d’un point' : 'à toi de bannir';
+  return '';
+}
+
+// 'fresh' once when the headline changes (a new advice), so the eye goes back to it.
+function fresh(text) {
+  if (text === lastHeadline) return '';
+  const first = !lastHeadline;
+  lastHeadline = text;
+  return first ? '' : 'fresh';
+}
+
 function renderPeople() {
+  if (remote && state?.following && people.length < 2) {
+    return `<div class="demo-bar"><span>Tu suis ${esc(state.following)}. Pour tes propres conseils, lance l’appli sur ton PC.</span></div>`;
+  }
   if (!remote || people.length < 2) return '';
   return `<nav class="people">${people.map((p) => `<button data-me="${esc(p.name)}" class="${p.name === state?.summoner?.gameName ? 'on' : ''}">${esc(p.name)}</button>`).join('')}</nav>`;
 }
@@ -89,7 +120,7 @@ function renderGroupWaiting() {
   const hosts = [...new Map(people.map((p) => [p.msg.name, p.msg])).values()];
   return `${pcBanner()}${renderPeople()}<section class="wait"><div class="pulse ok"></div><h1>Groupe connecté</h1>
     <p>${hosts.map((m) => `${esc(m.name)} : ${status(m)}`).join('<br>')}</p>
-    <p>Les conseils apparaissent dès la sélection des champions, puis le build pendant la partie.</p></section><p class="legal">${LEGAL}</p>`;
+    <p>Les conseils apparaissent dès la sélection des champions, puis le build pendant la partie.</p></section>${renderRecap(state?.recap)}<p class="legal">${LEGAL}</p>`;
 }
 
 function renderWaiting() {
@@ -107,7 +138,7 @@ function renderWaiting() {
   const demo = `<section class="tile">
       <div class="tile-title">Voir une démo</div>
       <p>Rejoue une de tes vraies sélections, pour voir l'écran avant une partie.</p>
-      <div class="buttons"><button data-demo="ranked">Ranked solo</button><button data-demo="aram">ARAM du Chaos</button><button data-demo="game">En partie</button></div>
+      <div class="buttons"><button data-demo="ranked">Ranked solo</button><button data-demo="aram">ARAM du Chaos</button><button data-demo="game">En partie</button><button data-demo="recap">Après la partie</button></div>
     </section>`;
   const qr = onPc && phone?.groupQr
     ? `<section class="tile phone"><div class="qr">${phone.groupQr}</div><div>
@@ -132,7 +163,17 @@ function renderWaiting() {
       <datalist id="champ-names">${names.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
     </section>`;
   const version = state?.version ? `<p class="note">Version ${esc(state.version)}${state.update?.status === 'ready' ? ` · la ${esc(state.update.version)} s'installera après ta partie` : ''}</p>` : '';
-  return `${updateBanner()}<section class="wait">${body}</section>${who}<div class="tiles">${renderProfile()}${demo}${learn}${qr}</div>${version}<p class="legal">${LEGAL}</p>`;
+  return `${updateBanner()}<section class="wait">${body}</section>${who}${renderRecap(state?.recap)}<div class="tiles">${renderProfile()}${demo}${learn}${qr}</div>${version}<p class="legal">${LEGAL}</p>`;
+}
+
+// Your last games as a row of portraits, green for a win, red for a loss; today's count first.
+function renderRecent(recent) {
+  if (!recent?.length) return '';
+  const today = new Date().toDateString();
+  const games = recent.filter((r) => new Date(r.at).toDateString() === today);
+  const wins = games.filter((r) => r.win).length;
+  const count = games.length ? `<div class="small">Aujourd’hui : <b class="up">${wins} V</b> · <b class="down">${games.length - wins} D</b></div>` : '';
+  return `${count}<div class="recent">${recent.map((r) => `<span class="rgame ${r.win ? 'win' : 'loss'}" title="${esc(champName(r.championId))} · ${r.win ? 'victoire' : 'défaite'}">${img(r.championId)}</span>`).join('')}</div>`;
 }
 
 // Your own record, as it is: counts, not percentages, so small samples look small.
@@ -140,15 +181,15 @@ function renderProfile() {
   const p = state?.profileSummary;
   if (!p || (!p.comfort.length && !p.aram.length)) return '';
   const record = (r) => `<span class="small">${r.wins} V · ${r.games - r.wins} D</span>`;
-  const champs = (list) => list.map((c) => `<span class="duo">${mini(c.championId)}${record(c)}</span>`).join('');
+  const champs = (list) => list.map((c) => `<span class="duo">${mini(c.championId)}<span class="small">${esc(champName(c.championId))}</span>${record(c)}</span>`).join('');
   const pairs = (list) => list.map((m) => `<div class="pair">${mini(m.championId)}<span class="small muted">vs</span>${mini(m.vs)}${record(m)}</div>`).join('');
   const rows = [
-    p.comfort.length ? `<div class="arow"><span class="alabel">Tes champions</span><div class="abody">${champs(p.comfort)}</div></div>` : '',
+    p.comfort.length ? `<div class="arow"><span class="alabel">Tes champions</span><div class="abody list">${champs(p.comfort)}</div></div>` : '',
     p.favorable.length ? `<div class="arow"><span class="alabel">Bons matchups</span><div class="abody">${pairs(p.favorable)}</div></div>` : '',
     p.hard.length ? `<div class="arow"><span class="alabel">Matchups durs</span><div class="abody">${pairs(p.hard)}</div></div>` : '',
-    p.aram.length ? `<div class="arow"><span class="alabel">ARAM du Chaos</span><div class="abody">${champs(p.aram)}</div></div>` : '',
+    p.aram.length ? `<div class="arow"><span class="alabel">ARAM du Chaos</span><div class="abody list">${champs(p.aram)}</div></div>` : '',
   ].join('');
-  return `<div class="col"><section class="tile"><div class="tile-title">Ton profil</div><p>Sur tes ${p.gamesRead} dernières parties${p.rank ? ` · ${esc(p.rank.tier)} ${esc(p.rank.division)}` : ''}. Peu de parties = simple tendance.</p></section>
+  return `<div class="col"><section class="tile"><div class="tile-title">Ton profil</div><p>Sur tes ${p.gamesRead} parties gardées${p.rank ? ` · ${esc(RANKS[p.rank.tier] ?? p.rank.tier)} ${esc(p.rank.division)}` : ''}. Peu de parties = simple tendance.</p>${renderRecent(p.recent)}</section>
     <section class="analysis">${rows}</section></div>`;
 }
 
@@ -191,14 +232,14 @@ function card(o, { flat = false, ref = false, best = false, precise = false } = 
   const showNumber = !flat && (isBan || o.p != null);
   const pos = (x) => Math.max(0, Math.min(100, ((x - SCALE[0]) / (SCALE[1] - SCALE[0])) * 100));
   const number = isBan
-    ? `<span class="big ${trend(o.gain, 0.05)}">${pts(o.gain)}<small>pt</small></span>`
-    : `<span class="big">${precise ? (o.p * 100).toFixed(1).replace('.', ',') : Math.round(o.p * 100)}<small>%</small></span>`;
+    ? `<span class="big ${trend(o.gain, 0.05)}">${num(o.gain, 'pts', 0)}<small>pt</small></span>`
+    : `<span class="big">${num(o.p, precise ? 'pct1' : 'pct', 0.5)}<small>%</small></span>`;
   const gauge = showNumber && !isBan
     ? `<div class="gauge ${best ? 'best' : ''}"><i class="range" style="left:${pos(o.low ?? o.p)}%;right:${100 - pos(o.high ?? o.p)}%"></i><i class="fill" style="width:${pos(o.p)}%"></i><i class="mid" style="left:${pos(0.5)}%"></i></div>`
     : '';
   const chips = (o.reasons ?? []).map((r) => `<span class="chip ${trend(r.delta)}">${esc(r.label)}<b>${pts(r.delta)}</b></span>`).join('');
   // A long tag (bans) moves to the second line so the name never gets cut.
-  const tagInTitle = chips || (o.tag ?? '').length <= 12;
+  const tagInTitle = champName(o.championId).length + (o.tag ?? '').length <= 18;
   const detail = !isBan && o.p != null
     ? `<div class="abs">
         ${o.vsId && o.delta != null ? `<div><b>${pts(o.delta)} pt</b> face à ${esc(champName(o.vsId))}</div>` : ''}
@@ -206,12 +247,12 @@ function card(o, { flat = false, ref = false, best = false, precise = false } = 
         ${o.high - o.low > 0.001 ? `<div>Entre ${pct(o.low)} et ${pct(o.high)}${o.n ? ` · ${o.n.toLocaleString('fr-FR')} parties analysées` : ''}</div>` : ''}
       </div>`
     : '';
-  return `<article class="card ${ref ? 'ref' : ''} ${o.mine ? 'mine' : ''} ${opened.has(o.championId) ? 'open' : ''}" data-id="${o.championId}">
+  return `<article id="card-${o.championId}${ref ? '-ref' : ''}" class="card ${ref ? 'ref' : ''} ${o.mine ? 'mine' : ''} ${opened.has(o.championId) ? 'open' : ''}" data-id="${o.championId}">
     ${o.close ? '<span class="eq">≈ égalité</span>' : ''}
     ${img(o.championId, 'portrait')}
     <div class="title"><span class="name">${esc(champName(o.championId))}</span>${tagInTitle ? `<span class="tag">${esc(o.tag ?? '')}</span>` : ''}</div>
     <div class="num">${showNumber ? number : ''}</div>
-    <div class="chips">${tagInTitle ? chips : `<span class="tag">${esc(o.tag)}</span>`}</div>
+    <div class="chips">${tagInTitle ? chips : `<span class="tag">${esc(o.tag ?? '')}</span>${chips}`}</div>
     ${gauge}
     ${o.warn ? `<div class="warn">${esc(o.warn)}</div>` : ''}
     ${o.brings?.length ? `<div class="brings">${o.brings.map((b) => `<span>${esc(b)}</span>`).join('')}</div>` : ''}
@@ -245,7 +286,7 @@ function timingVerdict(timing) {
 
 // The full read of the draft around the champion in focus: lane, other matchups, duos,
 // then both teams (damage, tanks, game length) and the overall win chance.
-function renderAnalysis(an) {
+function renderAnalysis(an, { hideOverall = false, hover = false } = {}) {
   if (!an) return '';
   const row = (label, body) => `<div class="arow"><span class="alabel">${label}</span><div class="abody">${body}</div></div>`;
   const rows = [];
@@ -254,12 +295,9 @@ function renderAnalysis(an) {
       ? `${mini(an.lane.opponentId)}<span class="aname">${esc(champName(an.lane.opponentId))}</span>${verdict(an.lane.delta)}<span class="muted small">${an.lane.games.toLocaleString('fr-FR')} parties</span>${an.lane.personal ? `<span class="small">toi : ${an.lane.personal.wins} V · ${an.lane.personal.games - an.lane.personal.wins} D</span>` : ''}`
       : `<span class="muted">Ton vis-à-vis n'a pas encore choisi${an.lane.worst ? ` · pire cas ${esc(an.lane.worst.name)} ${pts(an.lane.worst.delta)}` : ''}</span>`));
   }
-  if (an.others?.length) {
-    rows.push(row('Les autres', an.others.map((o) => `<span class="duo">${mini(o.championId)}<b class="${trend(o.delta, 0.5)}">${pts(o.delta)}</b></span>`).join('')));
-  }
-  if (an.duos?.length) {
-    rows.push(row('Tes duos', an.duos.map((o) => `<span class="duo">${mini(o.championId)}<b class="${trend(o.delta, 0.5)}">${pts(o.delta)}</b></span>`).join('')));
-  }
+  const named = (o) => `<span class="duo">${mini(o.championId)}<span class="small">${esc(champName(o.championId))}</span><b class="${trend(o.delta, 0.5)}">${pts(o.delta)}</b></span>`;
+  if (an.others?.length) rows.push(row('Autres matchups', an.others.map(named).join('')));
+  if (an.duos?.length) rows.push(row('Tes duos', an.duos.map(named).join('')));
   const { us, them } = an.teams ?? {};
   if (us) {
     rows.push(row('Dégâts', `<div class="teams"><div><span class="tname">Nous</span>${damageBar(us)}</div>${them ? `<div><span class="tname">Eux</span>${damageBar(them)}</div>` : ''}</div>`));
@@ -270,10 +308,10 @@ function renderAnalysis(an) {
     }
   }
   if (an.timing) {
-    rows.push(row('Durée', `<div class="timing">${an.timing.map((t) => `<span class="tcell"><small>${t.label}</small>${verdict(t.delta, ['Nous', '=', 'Eux']).replace('Nous ', '').replace('Eux ', '')}</span>`).join('')}</div><div class="muted small">${timingVerdict(an.timing)}</div>`));
+    rows.push(row('Durée', `<div class="timing">${an.timing.map((t) => `<span class="tcell"><small>${t.label}</small>${verdict(t.delta, ['Nous', '≈ 0', 'Eux']).replace('Nous ', '').replace('Eux ', '')}</span>`).join('')}</div><div class="muted small">${timingVerdict(an.timing)}</div>`));
   }
-  if (an.overall) {
-    rows.push(row('La partie', `<span class="overall">${pct(an.overall.p)}</span><span class="muted small">chance de gagner · entre ${pct(an.overall.low)} et ${pct(an.overall.high)}</span>`));
+  if (an.overall && !hideOverall) {
+    rows.push(row('La partie', `<span class="overall">${num(an.overall.p, 'pct', 0.5)} %</span><span class="muted small">chance de gagner · entre ${pct(an.overall.low)} et ${pct(an.overall.high)}</span>`));
   }
   const warnings = [us?.warning, them?.warning ? `Eux : ${them.warning.toLowerCase()}` : '', ...(an.needs ?? [])]
     .filter(Boolean)
@@ -282,7 +320,7 @@ function renderAnalysis(an) {
   const fixes = (an.fixes ?? [])
     .map((f) => `<div class="fix">${mini(f.championId)}<span><b>${esc(champName(f.championId))}</b> ${esc(f.label.toLowerCase())} · ${pct(f.p)}</span></div>`)
     .join('');
-  return `<div class="label"><span>Analyse de la draft</span><b>avec ${esc(champName(an.championId))}</b></div>
+  return `<div class="label"><span>Analyse de la draft</span><b>avec ${esc(champName(an.championId))}${hover ? ' (ton survol)' : ''}</b></div>
     <section class="analysis">${rows.join('')}${warnings}${fixes ? `<div class="fixes"><span class="muted small">Pour combler :</span>${fixes}</div>` : ''}</section>`;
 }
 
@@ -323,10 +361,10 @@ function renderGame() {
   const buy = g.buy
     ? `<section class="card buy">${itemIcon(g.buy.item, 'portrait')}
         <div class="title"><span class="name">${esc(name(g.buy.item))}</span></div>
-        <div class="num"><span class="big ${g.buy.short ? '' : 'up'}">${g.buy.cost.toLocaleString('fr-FR')}<small> po</small></span></div>
+        <div class="num"><span class="big ${g.buy.short ? '' : 'up'}">${num(g.buy.cost, 'int')}<small> po</small></span></div>
         <div class="chips"><span class="tag">${esc(g.buy.short ? `il te manque ${g.buy.short.toLocaleString('fr-FR')} po` : g.buy.item !== g.buy.for ? `vers ${name(g.buy.for)}` : 'item complet')}${g.nextStats ? ` · ${pct(g.nextStats.winrate)} sur ${g.nextStats.games.toLocaleString('fr-FR')} parties` : ''}</span></div>
       </section>`
-    : '<p class="note">Ton build est complet.</p>';
+    : g.noBuild ? '<p class="note">Pas de build disponible pour ce champion pour l’instant, nouvel essai dans 30 s.</p>' : '<p class="note">Ton build est complet.</p>';
   const st = g.style;
   const styleNote = st?.followed
     ? `<p class="note good">Tu es parti ${esc(st.name)} : le build suit, d'après ${g.source.games.toLocaleString('fr-FR')} parties ${esc(st.name)} sur u.gg.</p>`
@@ -359,35 +397,142 @@ function renderGame() {
     `<div class="arow"><span class="alabel">Tanks</span><div class="abody"><b>${e.tanks ?? 0}</b></div></div>`,
   ].join('');
   const skills = g.skills?.priority
-    ? `<div class="arow"><span class="alabel">Sorts</span><div class="abody"><b class="skills">${esc(g.skills.priority.split('').join(' › '))}</b><span class="muted small">départ ${esc(g.skills.start.join(' '))}</span></div></div>`
+    ? `<p class="skillrow">Sorts à monter <b class="skills">${esc(g.skills.priority.split('').join(' › '))}</b><span class="muted small">départ ${esc(g.skills.start.join(' '))}</span></p>`
     : '';
   const source = g.source
     ? `${g.source.queue === 'normal_aram' ? 'Build ARAM' : 'Build des joueurs de ton rang'} sur ${g.source.games.toLocaleString('fr-FR')} parties (u.gg, patch ${g.source.patch.replace('_', '.')})${g.source.games < 200 ? ' : petit échantillon, à prendre comme une piste' : ''}.`
     : 'Pas de build disponible pour ce champion.';
-  const winrate = g.source ? `${st?.followed ? `build ${esc(st.name)} · ` : ''}${Math.round((g.source.wins / Math.max(1, g.source.games)) * 100)} % de victoires` : '';
+  const winrate = !g.source
+    ? ''
+    : `${st?.followed ? `build ${esc(st.name)} · ` : ''}${g.source.games < 200 ? `${g.source.games.toLocaleString('fr-FR')} parties` : `${Math.round((g.source.wins / Math.max(1, g.source.games)) * 100)} % de victoires`}`;
+  const title = !g.buy ? (g.noBuild ? 'En partie' : 'Build complet') : g.buy.short ? `Prochain : ${name(g.buy.item)}` : `Achète ${name(g.buy.item)}`;
   return `${demo}${renderPeople()}
     <header class="head">
-      <div><h1>En partie</h1><div class="sub"><i class="dot"></i>${esc(champName(g.championId))} · ${clock(g.gameTime)}</div></div>
-      <div class="gold">${golds(g.gold)}</div>
+      <div><h1 class="${g.buy && !g.buy.short ? 'mine' : ''} ${title.length > 14 ? 'long' : ''} ${fresh(title)}">${esc(title)}</h1><div class="sub"><i class="dot"></i>${esc(champName(g.championId))} · ${clock(g.gameTime)}</div></div>
+      <div class="gold">${num(g.gold, 'int')} po</div>
     </header>
+    ${renderAlive(g)}
     <div class="cols">
       <div class="col">
-        <div class="label"><span>${g.buy?.short ? 'Prochain achat' : 'Achète maintenant'}</span></div>
         ${buy}
         ${alternatives ? `<div class="label"><span>Ou bien</span></div>${alternatives}` : ''}
         <div class="label"><span>Ton build</span><b>${winrate}</b></div>
         ${path}
+        ${skills}
         ${styleNote}
       </div>
       <div class="col">
+        ${renderGoldChart(g)}
+        ${renderFeed(g)}
         ${renderPlan()}
         ${adapt}
         <div class="label"><span>Eux</span></div>
-        <section class="analysis">${enemyRows}${skills}</section>
+        <section class="analysis">${enemyRows}</section>
         <p class="note">${esc(source)}</p>
       </div>
     </div>
     <p class="legal">${LEGAL}</p>`;
+}
+
+// The fight right now: how many are alive on each side, and until when (the scoreboard
+// shows the respawn timers one by one; here they are counted for you).
+function renderAlive(g) {
+  const lv = g.live;
+  if (!lv || lv.alive.us === lv.alive.them) return '';
+  const ahead = lv.alive.us > lv.alive.them;
+  // The advantage lasts until the first of the outnumbered side comes back.
+  const back = lv.dead.filter((d) => d.ally !== ahead).sort((a, b) => a.left - b.left)[0];
+  const until = back ? g.at + back.left * 1000 : null;
+  return `<section class="alive ${ahead ? 'up' : 'down'}">
+      <div class="alive-n"><b>${lv.alive.us}</b><span>contre</span><b>${lv.alive.them}</b></div>
+      <div class="alive-t">${ahead ? 'À vous de jouer' : 'Recule'}${until ? ` · encore <b data-until="${until}">${back.left} s</b>` : ''}</div>
+      <div class="alive-dead">${lv.dead.filter((d) => d.ally !== ahead).map((d) => `<span class="mini dead">${img(d.championId)}<i data-until="${g.at + d.left * 1000}">${d.left} s</i></span>`).join('')}</div>
+    </section>`;
+}
+
+// Gold held in items, team against team, over the game; kills as dots on the edges.
+function renderGoldChart(g) {
+  const lv = g.live;
+  if (!lv?.points?.length) return '';
+  const W = 320;
+  const H = 120;
+  const mid = H / 2;
+  const tMax = Math.max(lv.t, 240);
+  const span = Math.max(1500, ...lv.points.map((p) => Math.abs(p[1]))) * 1.15;
+  const x = (t) => (t / tMax) * W;
+  const y = (v) => mid - (v / span) * (mid - 10);
+  // Before the first read (the app started mid-game) the curve is unknown: a dashed line from 0.
+  const known = lv.t - lv.points[0][0] < 10 ? [[0, 0], lv.points.at(-1)] : lv.points;
+  const pts = known.map(([t, v]) => [x(t), y(v)]);
+  const data = JSON.stringify(pts.map(([a, b]) => [+a.toFixed(1), +b.toFixed(1)]));
+  const before = known[0][0] > 30 ? `<line class="before" x1="0" y1="${mid}" x2="${pts[0][0].toFixed(1)}" y2="${pts[0][1].toFixed(1)}"/>` : '';
+  const diff = lv.gold.us - lv.gold.them;
+  const kills = lv.kills.map(([t, ours]) => `<circle class="kill ${ours ? 'us' : 'them'}" cx="${x(t).toFixed(1)}" cy="${ours ? 4 : H - 4}" r="2.6"/>`).join('');
+  const minutes = Array.from({ length: Math.floor(tMax / 300) }, (_, i) => (i + 1) * 300).map((t) => `<line class="tick" x1="${x(t)}" x2="${x(t)}" y1="${mid - 3}" y2="${mid + 3}"/>`).join('');
+  return `<div class="label"><span>La partie</span><b>or en items · kills</b></div>
+    <section class="chart">
+      <div class="chart-head">
+        <span class="score"><b class="up">${lv.score.us}</b> – <b class="down">${lv.score.them}</b></span>
+        <span class="gnow ${diff >= 0 ? 'up' : 'down'}">${num(diff, 'k')}</span>
+      </div>
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="gold">
+        <defs>
+          <clipPath id="gc-up"><rect x="0" y="0" width="${W}" height="${mid}"/></clipPath>
+          <clipPath id="gc-down"><rect x="0" y="${mid}" width="${W}" height="${mid}"/></clipPath>
+        </defs>
+        <line class="axis" x1="0" x2="${W}" y1="${mid}" y2="${mid}"/>${minutes}
+        <path class="tw area up" clip-path="url(#gc-up)" data-base="${mid}" data-pts="${esc(data)}" d=""/>
+        <path class="tw area down" clip-path="url(#gc-down)" data-base="${mid}" data-pts="${esc(data)}" d=""/>
+        <path class="tw line" data-pts="${esc(data)}" d=""/>${before}
+        ${kills}
+      </svg>
+      <div class="chart-foot"><span>Vous ${num(lv.gold.us, 'int')} po</span><span>${clock(lv.t)}</span><span>Eux ${num(lv.gold.them, 'int')} po</span></div>
+    </section>`;
+}
+
+// What just happened, newest first: an enemy's big item, a multikill, an inhibitor down.
+function renderFeed(g) {
+  const lv = g.live;
+  const timers = (lv?.timers ?? []).map((t) => `<span class="chip ${t.ally ? 'up' : 'down'}">${{ inhib: t.ally ? 'Leur inhib' : 'Votre inhib', dragon: 'Dragon', baron: 'Baron' }[t.kind]} <b data-until="${g.at + (t.back - lv.t) * 1000}" data-clock="1">${clock(t.back - lv.t)}</b></span>`).join('');
+  if (!lv?.feed?.length && !timers) return '';
+  const rows = (lv.feed ?? []).map((f) => `<div class="feed-row ${f.ally ? 'up' : f.ally === false ? 'down' : ''}" id="feed-${f.t}-${esc(f.kind)}-${f.championId ?? 0}">
+      <span class="feed-t">${clock(f.t)}</span>${f.item ? itemIcon(f.item, 'mini-item') : f.championId ? mini(f.championId) : ''}<span>${esc(f.text)}</span></div>`).join('');
+  return `<div class="label"><span>Moments clés</span>${timers ? '<b>repop</b>' : ''}</div>
+    <section class="analysis feed">${timers ? `<div class="timers">${timers}</div>` : ''}${rows}</section>`;
+}
+
+// After the game: the ten players side by side, the bars grow and slide when you switch.
+const METRICS = { damage: 'Dégâts', taken: 'Encaissés', heal: 'Soins', gold: 'Or' };
+const ROW = 40;
+let metric = 'damage';
+function renderRecap(r) {
+  if (!r?.players?.length) return '';
+  const value = (p) => p[metric] ?? 0;
+  const max = Math.max(1, ...r.players.map(value));
+  const order = [...r.players].sort((a, b) => value(b) - value(a));
+  const rank = new Map(order.map((p, i) => [p.id, i]));
+  const me = r.players.find((p) => p.me);
+  const myRank = rank.get(me.id) + 1;
+  const rows = r.players.map((p) => `<div class="bar-row ${p.ally ? 'ally' : 'enemy'} ${p.me ? 'me' : ''}" id="bar-${p.id}" style="transform:translateY(${rank.get(p.id) * ROW}px);--d:${rank.get(p.id) * 60}ms">
+      ${img(p.championId)}
+      <div class="bar"><i style="width:${((value(p) / max) * 100).toFixed(1)}%"></i><span class="bname">${esc(p.name || champName(p.championId))}<small>${p.kills}/${p.deaths}/${p.assists}</small></span></div>
+      <b class="bval">${num(value(p), 'int', 0)}</b>
+    </div>`).join('');
+  const augs = me.augments.map((id) => r.augments?.[id]).filter(Boolean);
+  const augRow = augs.length
+    ? `<div class="augs">${augs.map((a) => `<span class="aug ${esc(a.rarity)}">${a.icon ? `<img src="${esc(a.icon)}" alt="">` : ''}${esc(a.name)}</span>`).join('')}</div>`
+    : '';
+  return `<div class="label"><span>${r.demo ? 'Récap d’exemple' : 'Ta dernière partie'}</span><b>${clock(r.duration)}</b></div>
+    <section class="recap ${r.win ? 'win' : 'loss'}">
+      <div class="recap-head">${img(me.championId, 'portrait')}<div>
+        <div class="recap-title">${r.win ? 'Victoire' : 'Défaite'} · ${esc(champName(me.championId))}</div>
+        <div class="small muted">${me.kills}/${me.deaths}/${me.assists} · ${myRank === 1 ? 'n°1' : `${myRank}e`} en ${METRICS[metric].toLowerCase()} sur 10</div>
+      </div></div>
+      ${augRow}
+      <div class="metrics">${Object.entries(METRICS).map(([k, label]) => `<button data-metric="${k}" class="${k === metric ? 'on' : ''}">${label}</button>`).join('')}</div>
+      <div class="bars" style="height:${r.players.length * ROW}px">${rows}</div>
+      <p class="note">Dégâts aux champions, dégâts encaissés (atténués compris), soins et or, tels que le client les enregistre en fin de partie.</p>
+    </section>`;
 }
 
 // The public page without a group link: what it is, and the download for Windows.
@@ -451,7 +596,9 @@ function renderAdvice(d, a) {
   const topP = Math.max(...a.options.map((o) => o.p ?? -1));
   const best = (o) => (aram ? o.championId === a.focus : o.p != null && o.p === topP) && a.options.length > 1;
   const cards = a.options.map((o) => card(o, { flat, best: best(o), precise: aram })).join('');
-  const legend = aram
+  const legend = aram && flat
+    ? ''
+    : aram
     ? '<p class="legend">Winrate de chaque champion dans le mode, tel que la source le publie. On ne te conseille de changer que pour au moins un point de plus.</p>'
     : !flat && d.myTurn !== 'ban' && a.options.some((o) => o.p != null)
       ? '<p class="legend">Ligne blanche = 50 %. Un point de plus = une victoire de plus sur 100 parties. Entre deux bons choix, l’écart est souvent de 1 à 4 points.</p>'
@@ -465,7 +612,11 @@ function renderAdvice(d, a) {
       : '';
   return {
     main: `<div class="label"><span>${title}</span><b>${esc(right)}</b></div>${cards}${legend}${refCard}`,
-    side: `${renderAvoid(a)}${renderLearn(a)}${renderAnalysis(a.analysis)}${note}`,
+    side: `${renderAvoid(a)}${renderLearn(a)}${renderAnalysis(a.analysis, {
+      // The locked champion's card already shows the same win chance.
+      hideOverall: a.options.length === 1 && a.options[0].championId === a.analysis?.championId,
+      hover: Boolean(a.hover) && a.hover.championId === a.analysis?.championId && a.options[0]?.championId !== a.hover.championId,
+    })}${note}`,
   };
 }
 
@@ -475,31 +626,102 @@ function aramWhy(a) {
   const mine = a?.options?.find((o) => o.mine);
   if (!focus || !mine || a.flat) return '';
   const gap = (x) => `${pts(x)} pt${x >= 0.0195 ? 's' : ''}`;
-  if (a.verb === 'Prends') return `${gap(focus.p - mine.p)} sur ${champName(mine.championId)}, sur le banc avant les autres`;
+  if (a.verb === 'Prends') return `${gap(focus.p - mine.p)} par rapport à ${champName(mine.championId)} · prends-le avant les autres`;
   const next = a.options.filter((o) => !o.mine && !o.takenBy).sort((x, y) => y.p - x.p)[0];
   if (next && next.p > mine.p) return `${champName(next.championId)} à peine mieux (${gap(next.p - mine.p)}) : comme tu préfères`;
   return 'rien de mieux sur le banc';
 }
 
+// The page is patched in place, not rebuilt: images stay loaded, the field being typed in
+// keeps its text, bars slide to their new width and numbers count to their new value.
+function paint(html) {
+  Idiomorph.morph(app, html, { morphStyle: 'innerHTML', ignoreActiveValue: true });
+  countUp();
+  glide();
+}
+
+// Charts: <path class="tw" data-pts="[[x,y],…]" data-base="60">. A new point slides in from
+// the last one and the whole curve eases to its new scale, instead of jumping.
+function pathOf(points, base) {
+  const line = points.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join('');
+  return base == null || !points.length ? line : `${line}L${points.at(-1)[0].toFixed(1)},${base}L${points[0][0].toFixed(1)},${base}Z`;
+}
+function glide() {
+  for (const el of app.querySelectorAll('path.tw[data-pts]')) {
+    const to = JSON.parse(el.dataset.pts);
+    const base = el.dataset.base != null ? Number(el.dataset.base) : null;
+    const from = el.pts;
+    el.pts = to;
+    if (!motion || !from?.length) {
+      el.setAttribute('d', pathOf(to, base));
+      continue;
+    }
+    const start = performance.now();
+    const run = (now) => {
+      if (el.pts !== to) return;
+      const k = Math.min(1, (now - start) / 700);
+      const e = 1 - (1 - k) ** 3;
+      const mid = to.map(([x, y], i) => {
+        const [fx, fy] = from[Math.min(i, from.length - 1)];
+        return [fx + (x - fx) * e, fy + (y - fy) * e];
+      });
+      el.setAttribute('d', pathOf(mid, base));
+      if (k < 1) requestAnimationFrame(run);
+    };
+    requestAnimationFrame(run);
+  }
+}
+
+// <b class="n" data-n="0.573" data-f="pct">57</b>: shown values glide to the new one.
+const FORMATS = {
+  pct: (v) => String(Math.round(v * 100)),
+  pct1: (v) => (v * 100).toFixed(1).replace('.', ','),
+  pts: (v) => pts(v),
+  int: (v) => Math.round(v).toLocaleString('fr-FR'),
+  k: (v) => `${v >= 0.05 ? '+' : v <= -0.05 ? '−' : ''}${Math.abs(v / 1000).toFixed(1).replace('.', ',')} k`,
+};
+const motion = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+function countUp() {
+  for (const el of app.querySelectorAll('.n[data-n]')) {
+    const to = Number(el.dataset.n);
+    const from = el.shown ?? (el.dataset.from != null ? Number(el.dataset.from) : to);
+    const format = FORMATS[el.dataset.f] ?? FORMATS.int;
+    el.shown = to;
+    if (!motion || from === to || !Number.isFinite(from)) {
+      el.textContent = format(to);
+      continue;
+    }
+    const start = performance.now();
+    const run = (now) => {
+      if (el.shown !== to) return; // a newer value took over
+      const k = Math.min(1, (now - start) / 650);
+      el.textContent = format(from + (to - from) * (1 - (1 - k) ** 3));
+      if (k < 1) requestAnimationFrame(run);
+    };
+    requestAnimationFrame(run);
+  }
+}
+const num = (v, f, from) => `<b class="n" data-n="${v}" data-f="${f}"${from != null ? ` data-from="${from}"` : ''}>${FORMATS[f](v)}</b>`;
+
 function render() {
   if (hosted && !remote) {
-    app.innerHTML = renderLanding();
+    paint(renderLanding());
     return;
   }
   if (state?.game) {
-    app.innerHTML = renderGame();
+    paint(renderGame());
     return;
   }
   if (state?.plan && ['GameStart', 'InProgress'].includes(state.gameflow)) {
-    app.innerHTML = renderLoading();
+    paint(renderLoading());
     return;
   }
   if (remote && !state) {
-    app.innerHTML = renderGroupWaiting();
+    paint(renderGroupWaiting());
     return;
   }
   if (state?.status !== 'champ-select' || !state.draft) {
-    app.innerHTML = renderWaiting();
+    paint(renderWaiting());
     return;
   }
   const d = state.draft;
@@ -507,7 +729,7 @@ function render() {
   const me = d.allies.find((p) => p.me);
   const h = headline(d, a, me);
   const mode = state.queue?.name || QUEUES[d.queueId] || 'Partie';
-  const sub = [ROLE_NAMES[me?.role], d.kind === 'aram' ? aramWhy(a) : '', mode].filter(Boolean).join(' · ');
+  const sub = [turnNote(d, a), ROLE_NAMES[me?.role], mode].filter(Boolean).join(' · ');
   const who = state.demo?.profile === 'real' ? 'ton profil' : 'un profil d’exemple (ouvre le client LoL pour le tien)';
   const demo = !state.demo
     ? ''
@@ -517,17 +739,23 @@ function render() {
         ? `<div class="demo-bar step"><span>${esc(state.demo.caption)}</span><button data-demo="next">Continuer</button></div>`
         : `<div class="demo-bar"><span>Démo d’une de tes vraies sélections, avec ${who}</span><button data-demo="stop">Arrêter</button></div>`;
   const { main, side } = renderAdvice(d, a);
-  app.innerHTML = `${renderPeople()}${demo}
+  paint(`${renderPeople()}${demo}
     <header class="head">
-      <div><h1 class="${h.mine ? 'mine' : ''} ${h.text.length > 14 ? 'long' : ''}">${esc(h.text)}</h1><div class="sub"><i class="dot"></i>${esc(sub)}</div></div>
+      <div><h1 class="${h.mine ? 'mine' : ''} ${h.text.length > 14 ? 'long' : ''} ${fresh(h.text)}">${esc(h.text)}</h1><div class="sub"><i class="dot"></i>${esc(sub)}</div></div>
       <div class="ring" id="ring"><svg viewBox="0 0 58 58"><circle class="track" cx="29" cy="29" r="25"/><circle class="left" cx="29" cy="29" r="25" stroke-dasharray="157.1" stroke-dashoffset="0"/></svg><span></span></div>
     </header>
     <div class="cols"><div class="col">${renderGrid(d, a)}${main}</div><div class="col">${side}</div></div>
-    <p class="legal">${LEGAL}</p>`;
+    <p class="legal">${LEGAL}</p>`);
   tick();
 }
 
 app.addEventListener('click', (e) => {
+  const pickMetric = e.target.closest('[data-metric]');
+  if (pickMetric) {
+    metric = pickMetric.dataset.metric;
+    render();
+    return;
+  }
   const button = e.target.closest('[data-demo]');
   if (button) {
     fetch(`/demo/${button.dataset.demo}`, { method: 'POST' });
@@ -582,6 +810,11 @@ app.addEventListener('submit', async (e) => {
 });
 
 function tick() {
+  for (const el of app.querySelectorAll('[data-until]')) {
+    const left = Math.max(0, Math.ceil((Number(el.dataset.until) - Date.now()) / 1000));
+    const text = el.dataset.clock ? clock(left) : `${left} s`;
+    if (el.textContent !== text) el.textContent = text;
+  }
   const ring = document.getElementById('ring');
   if (!ring) return;
   const label = ring.querySelector('span');
@@ -608,7 +841,7 @@ function onState(next) {
     deadline = null;
   }
   if (!d) opened.clear();
-  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name), state.settings, state.game, state.profileSummary, phone?.group, state.group, state.plan, state.update]);
+  const key = JSON.stringify([state.following, state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name), state.settings, state.game, state.recap, state.profileSummary, phone?.group, state.group, state.plan, state.update]);
   if (key !== lastKey) {
     lastKey = key;
     render();
@@ -650,6 +883,7 @@ function showRemote() {
   const pick = people.find((p) => p.name === wanted) ?? people[0];
   const { msg, view } = pick;
   onState({
+    following: wanted && pick.name !== wanted ? pick.name : null,
     status: view.draft ? 'champ-select' : msg.status,
     gameflow: msg.gameflow,
     summoner: { gameName: pick.name },
@@ -658,6 +892,7 @@ function showRemote() {
     advice: view.advice,
     game: view.self ? msg.game ?? null : null,
     plan: view.self ? msg.plan ?? null : null,
+    recap: msg.recap ?? null,
     champions: msg.champions,
     assets: msg.assets,
     demo: msg.demo,

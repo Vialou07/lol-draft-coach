@@ -16,6 +16,7 @@ const QUEUES = {
 
 const read = (name) => JSON.parse(readFileSync(new URL(name, import.meta.url), 'utf8'));
 const ddragon = read('./fixtures/ddragon-champions.json');
+const augments = read('./fixtures/augments-sample.json');
 const summary = [{ id: -1, name: 'Aucun', alias: 'None' }].concat(
   Object.values(ddragon.data).map((c) => ({ id: Number(c.key), name: c.name, alias: c.id, roles: c.tags.map((t) => t.toLowerCase()) })),
 );
@@ -37,6 +38,7 @@ export async function startFakeClient({ fixture, lockfile, speed = 20, minGapMs 
     '/lol-champ-select/v1/session': () => session,
     '/lol-champion-mastery/v1/local-player/champion-mastery': () => profile.mastery,
     '/lol-ranked/v1/current-ranked-stats': () => profile.ranked,
+    '/lol-game-data/assets/v1/cherry-augments.json': () => augments,
   };
 
   const key = readFileSync(new URL('./certs/key.pem', import.meta.url));
