@@ -99,3 +99,17 @@ test('roles: measured on real games when known, the client tags otherwise; two t
   }
   assert.ok(roles.allies.find((x) => x.me).roles.includes('Tank'));
 });
+
+test('the evening keeps you and your friends from each game, with their share of the team damage', async () => {
+  const { eveningGame, eveningStart } = await import('../companion/evening.mjs');
+  const detail = read('./fixtures/game-detail-galio.json');
+  const recap = gameRecap(detail, { puuid: 'me' });
+  const friend = recap.players.find((p) => p.ally && !p.me);
+  const game = eveningGame(recap, { friends: new Set([friend.puuid]) });
+  assert.deepEqual(game.players.map((p) => p.me), [true, false]);
+  const team = recap.players.filter((p) => p.ally).reduce((s, p) => s + p.damage, 0);
+  assert.ok(Math.abs(game.players[0].share - 51772 / team) < 1e-9);
+  assert.equal(game.players[0].win, true);
+  assert.equal(eveningGame(recap).players.length, 1, 'strangers stay out');
+  assert.equal(new Date(eveningStart(new Date(2026, 9, 31, 1, 30))).getDate(), 30, 'one in the morning is still the evening before');
+});
