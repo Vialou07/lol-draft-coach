@@ -6,7 +6,18 @@ Un petit programme (le compagnon) tourne sur le PC pendant que LoL est ouvert. I
 des champions dans le client, en lecture seule, et affiche une page qui se met à jour toute seule,
 sur le PC ou sur le téléphone posé à côté (même Wi-Fi).
 
-## Lancer
+## Pour les potes : rien à installer d'autre que ce fichier
+
+1. Télécharger `LolDraftCoach.exe` depuis la page **Releases** du dépôt.
+2. Double-clic. Windows affiche « Windows a protégé votre ordinateur » (le fichier n'est pas signé) :
+   « Informations complémentaires », puis « Exécuter quand même ». Une fenêtre noire s'ouvre, la page aussi.
+3. Une seule fois : coller le lien du groupe (envoyé par Thomas) dans « Ou colle le lien du groupe d'un pote »,
+   puis « Rejoindre ». C'est mémorisé.
+4. Ensuite : lancer le fichier avant de jouer. Le téléphone suit la même draft via le lien du groupe.
+
+Les données (stats, cache, groupe) sont rangées dans `%LOCALAPPDATA%\LolDraftCoach`.
+
+## Lancer depuis le code
 
 1. Double-clic sur `lancer.cmd` (la première fois, il installe ce qu'il faut). Ou `npm install` puis `npm start`.
 2. La page s'ouvre dans le navigateur. L'adresse pour le téléphone s'affiche dans la fenêtre noire.
@@ -23,10 +34,15 @@ Si quelque chose coince, le journal est dans `data/local/companion.log`.
   client est noté en bas. Un tap sur une carte montre la chance de victoire estimée.
 - **ARAM du Chaos** : les meilleurs champions du banc que tu possèdes, comparés à ton champion actuel.
 - **Arena** : reconnue, pas encore de conseils.
+- **En partie** : quoi acheter avec tes golds, ton build habituel à ton rang (u.gg), les items que leur compo demande
+  (soins, très AD ou AP, tanks), l'ordre des sorts. Via l'API officielle de Riot (Live Client Data).
+- **Ton profil** : tes champions, tes bons et mauvais matchups de lane, lus dans l'historique du client.
+- **Mode groupe** : la page publique suit la draft de chacun par un relais chiffré ; la clé n'est que dans le lien.
 
 ## Règles du projet
 
-- Lecture seule : aucun pick, ban, verrouillage, échange ou import automatique. Un test le vérifie.
+- Vanguard d'abord : lecture seule (aucun pick, ban, verrouillage, échange ou import automatique, un test le vérifie),
+  aucune lecture de la mémoire du jeu, aucune injection, rien d'affiché par-dessus le jeu.
 - Seulement ce que le client montre au joueur : un champion adverse compte une fois verrouillé (les
   données du client contiennent parfois le survol adverse, il est ignoré exprès), les joueurs masqués en
   ranked ne sont jamais identifiés.
@@ -53,7 +69,8 @@ properties are trademarks or registered trademarks of Riot Games, Inc.
 ## Développement
 
 ```
-npm test                                       # 22 tests, sans réseau ni client LoL
+npm test                                       # 37 tests, sans réseau ni client LoL
+npm run build:exe                              # dist/LolDraftCoach.exe (Node SEA, environ 90 Mo)
 npm run demo -- q2400-2026-10-24-40.json       # rejoue une vraie partie dans la page
 node tools/extract-log-sessions.mjs            # transforme les logs du client en cas de test anonymisés
 ```

@@ -109,6 +109,7 @@ function renderWaiting() {
         <div class="tile-title">Le lien du groupe</div>
         <p>Scanne-le avec ton téléphone, et envoie-le à tes potes : quand vous jouez ensemble, chacun voit sa propre draft. Rien à installer.</p>
         <div class="buttons"><button data-copy="${esc(phone.group)}">Copier le lien</button></div>
+        <form class="add" data-join-form><input name="link" placeholder="Ou colle le lien du groupe d'un pote" autocomplete="off"><button>Rejoindre</button></form>
         ${phone.url ? `<p class="url">Même Wi-Fi, sans internet : ${esc(phone.url)}</p>` : ''}</div></section>`
     : onPc && phone?.qr
       ? `<section class="tile phone"><div class="qr">${phone.qr}</div><div>
@@ -448,7 +449,16 @@ function saveLearning(learning) {
   fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ learning }) });
 }
 
-app.addEventListener('submit', (e) => {
+app.addEventListener('submit', async (e) => {
+  const join = e.target.closest('[data-join-form]');
+  if (join) {
+    e.preventDefault();
+    const res = await fetch('/group/join', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ link: join.link.value.trim() }) }).then((r) => r.json());
+    join.link.value = res.ok ? '' : res.error;
+    if (res.ok) phone = await fetch('/phone').then((r) => r.json());
+    if (state) onState({ ...state });
+    return;
+  }
   const form = e.target.closest('[data-learn-form]');
   if (!form) return;
   e.preventDefault();
@@ -485,7 +495,7 @@ function onState(next) {
     deadline = null;
   }
   if (!d) opened.clear();
-  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name), state.settings, state.game, state.profileSummary]);
+  const key = JSON.stringify([state.status, state.gameflow, state.summoner, state.queue, state.demo, d && { ...d, timeLeftMs: 0 }, state.advice, phone?.url, people.map((p) => p.name), state.settings, state.game, state.profileSummary, phone?.group, state.group]);
   if (key !== lastKey) {
     lastKey = key;
     render();

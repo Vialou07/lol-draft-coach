@@ -11,8 +11,9 @@ import { loadMayhemStats } from './stats-aram.mjs';
 import { loadChampionInfo } from './static-data.mjs';
 import { loadAttributes } from './static-attrs.mjs';
 import { loadEloStats, TIER_SLUGS, DEFAULT_TIER } from './stats-elo.mjs';
-import { loadGroup, groupLink, playerIdFor, startRelay } from './relay.mjs';
+import { loadGroup, groupLink, playerIdFor, startRelay, parseGroupLink, saveGroup } from './relay.mjs';
 import { assignBench } from './team.mjs';
+import { readAsset } from './assets.mjs';
 import { dataFile } from './paths.mjs';
 import { readLiveGame } from './live.mjs';
 import { adviseBuild, championKeyOf } from './advise-build.mjs';
@@ -117,8 +118,8 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   const friendProfiles = new Map();
 
   // Group sharing: friends follow their own draft on their phone through the group link.
-  const group = share ? await loadGroup().catch(() => null) : null;
-  const relay = group ? await startRelay({ group, onLog }).catch(() => null) : null;
+  let group = share ? await loadGroup().catch(() => null) : null;
+  let relay = group ? await startRelay({ group, onLog }).catch(() => null) : null;
   if (group) state.group = { link: groupLink(group) };
 
   const server = await startServer({
@@ -131,6 +132,20 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       '/demo/aram': () => startDemo('aram'),
       '/demo/game': () => startGameDemo(),
       '/demo/stop': () => stopDemo(),
+      // A friend's companion joins the host's group by pasting the group link once.
+      '/group/join': async (input) => {
+        const joined = parseGroupLink(input?.link ?? '');
+        if (!share) return { error: 'Partage désactivé.' };
+        if (!joined) return { error: 'Lien de groupe invalide.' };
+        await relay?.stop();
+        group = { ...joined, joinedAt: new Date().toISOString() };
+        await saveGroup(group);
+        relay = await startRelay({ group, onLog }).catch(() => null);
+        state.group = { link: groupLink(group) };
+        onLog('Groupe rejoint.');
+        changed();
+        return { ok: true };
+      },
       '/settings': async (input) => {
         const learning = Array.isArray(input?.learning) ? [...new Set(input.learning.map(Number).filter((id) => id > 0))].slice(0, 12) : state.settings.learning;
         state.settings = { ...state.settings, learning };
@@ -271,7 +286,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
   // Demo of the in-game screen: a recorded-format sample game.
   const startGameDemo = async () => {
     if (state.status === 'champ-select' || state.gameflow === 'InProgress') return { error: 'Une partie est en cours.' };
-    const live = JSON.parse(await readFile(new URL('../test/fixtures/live-sample.json', import.meta.url), 'utf8'));
+    const live = JSON.parse(await readAsset('test/fixtures/live-sample.json'));
     state.demo = { name: 'game', profile: profile ? 'real' : 'sample', caption: 'En partie : quoi acheter avec tes golds maintenant, ton build habituel, et ce que leur compo demande.' };
     state.status = 'in-game';
     await adviseLive(live);
@@ -309,7 +324,7 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
     }
     const run = (demo = { name, cancelled: false, resume: null });
     const spec = DEMOS[name];
-    const fixture = JSON.parse(await readFile(new URL(`../test/fixtures/real/${spec.file}`, import.meta.url), 'utf8'));
+    const fixture = JSON.parse(await readAsset(`test/fixtures/real/${spec.file}`));
     Object.assign(state, { demo: { name, profile: profile ? 'real' : 'sample', caption: null }, queue: spec.queue, status: 'champ-select' });
     lastDraftKey = '';
     (async () => {

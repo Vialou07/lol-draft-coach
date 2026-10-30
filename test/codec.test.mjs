@@ -23,3 +23,11 @@ test('base64url keys round-trip', () => {
   const raw = randomBytes(32);
   assert.deepEqual(Buffer.from(fromB64url(toB64url(raw))), raw);
 });
+
+test('a group link gives back its id and key, a random string does not', async () => {
+  const { parseGroupLink, groupLink } = await import('../companion/relay.mjs');
+  const group = { id: 'c39b45ed518f4b4133', key: toB64url(randomBytes(32)) };
+  assert.deepEqual(parseGroupLink(groupLink(group)), group);
+  assert.equal(parseGroupLink('https://example.com/#g=nope'), null);
+  assert.equal(parseGroupLink('bonjour'), null);
+});

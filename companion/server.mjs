@@ -2,15 +2,13 @@
 // to the PC browser and to a phone on the same Wi-Fi.
 
 import http from 'node:http';
-import { readFile } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
-import { extname, join, normalize } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
+import { extname, posix } from 'node:path';
+import qrcode from 'qrcode-generator';
 import { WebSocketServer } from 'ws';
+import { readAsset, ASSET_FILES } from './assets.mjs';
 
-const qrcode = createRequire(import.meta.url)('qrcode-generator');
-const WEB_DIR = fileURLToPath(new URL('../web/', import.meta.url));
+const WEB_FILES = new Set(ASSET_FILES.filter((f) => f.startsWith('web/')));
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json' };
 const VIRTUAL = /vethernet|virtual|vmware|vbox|hyper-v|wsl|docker|bluetooth|loopback|tailscale|zerotier/i;
 
@@ -64,10 +62,11 @@ export function startServer({ port, host = '0.0.0.0', snapshot, icon = async () 
       res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'max-age=86400' });
       return res.end(png);
     }
-    const file = normalize(join(WEB_DIR, path === '/' ? 'index.html' : path));
-    if (!file.startsWith(normalize(WEB_DIR))) return res.writeHead(403).end();
+    // Only the shipped page files are served, nothing else from the disk.
+    const file = posix.join('web', posix.normalize(path === '/' ? '/index.html' : path));
+    if (!WEB_FILES.has(file)) return res.writeHead(404).end();
     try {
-      const body = await readFile(file);
+      const body = await readAsset(file);
       res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream', 'Cache-Control': 'no-cache' });
       res.end(body);
     } catch {

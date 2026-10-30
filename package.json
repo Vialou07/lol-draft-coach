@@ -1,13 +1,14 @@
 {
   "name": "lol-draft-coach",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Conseiller de sélection de champions LoL en direct",
   "type": "module",
   "scripts": {
     "start": "node companion/index.mjs",
     "test": "node --test test/*.test.mjs",
-    "demo": "node test/demo.mjs"
+    "demo": "node test/demo.mjs",
+    "build:exe": "node tools/build-exe.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -16,5 +17,9 @@
     "mqtt": "5.10.1",
     "qrcode-generator": "1.4.4",
     "ws": "8.18.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "postject": "1.0.0-alpha.6"
   }
 }

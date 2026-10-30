@@ -4,17 +4,9 @@
 
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
+import { isSea } from 'node:sea';
 
-const require = createRequire(import.meta.url);
-
-export function isPackaged() {
-  try {
-    return require('node:sea').isSea();
-  } catch {
-    return false;
-  }
-}
+export const isPackaged = () => isSea();
 
 export function dataDir() {
   if (process.env.LDC_DATA_DIR) return process.env.LDC_DATA_DIR;

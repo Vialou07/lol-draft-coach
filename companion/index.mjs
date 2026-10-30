@@ -29,31 +29,35 @@ async function alreadyRunning(port) {
   }
 }
 
-let app;
-for (const port of PORTS) {
-  try {
-    app = await startCompanion({ port, onLog: log });
-    break;
-  } catch (e) {
-    if (e.code === 'EADDRINUSE' && (await alreadyRunning(port))) {
-      console.log(`LoL Draft Coach tourne déjà : http://localhost:${port}`);
-      open(`http://localhost:${port}`);
-      process.exit(0);
+async function main() {
+  let app;
+  for (const port of PORTS) {
+    try {
+      app = await startCompanion({ port, onLog: log });
+      break;
+    } catch (e) {
+      if (e.code === 'EADDRINUSE' && (await alreadyRunning(port))) {
+        console.log(`LoL Draft Coach tourne déjà : http://localhost:${port}`);
+        open(`http://localhost:${port}`);
+        return process.exit(0);
+      }
+      if (e.code !== 'EADDRINUSE' && e.code !== 'EACCES') throw e;
+      log(`Port ${port} indisponible (${e.code}), essai suivant.`);
     }
-    if (e.code !== 'EADDRINUSE' && e.code !== 'EACCES') throw e;
-    log(`Port ${port} indisponible (${e.code}), essai suivant.`);
   }
-}
-if (!app) {
-  console.log('Aucun port disponible pour la page locale. Ferme les autres applis et relance.');
-  process.exit(1);
+  if (!app) {
+    console.log('Aucun port disponible pour la page locale. Ferme les autres applis et relance.');
+    return process.exit(1);
+  }
+
+  const local = `http://localhost:${app.port}`;
+  console.log(`\nLoL Draft Coach est lancé.`);
+  console.log(`  Sur ce PC      : ${local}`);
+  const phone = lanUrls(app.port)[0];
+  if (phone) console.log(`  Sur ton tél.   : ${phone}  (même Wi-Fi, ou scanne le QR code sur la page)`);
+  console.log(`\nLance LoL quand tu veux, la page se met à jour toute seule. Ctrl+C pour quitter.\n`);
+
+  open(local);
 }
 
-const local = `http://localhost:${app.port}`;
-console.log(`\nLoL Draft Coach est lancé.`);
-console.log(`  Sur ce PC      : ${local}`);
-const phone = lanUrls(app.port)[0];
-if (phone) console.log(`  Sur ton tél.   : ${phone}  (même Wi-Fi, ou scanne le QR code sur la page)`);
-console.log(`\nLance LoL quand tu veux, la page se met à jour toute seule. Ctrl+C pour quitter.\n`);
-
-open(local);
+main();

@@ -56,18 +56,20 @@ export async function startRelay({ group, onLog = () => {}, brokers = BROKERS })
   const connect = () => {
     const url = brokers[brokerIndex % brokers.length];
     const will = topic ? { topic, payload: Buffer.alloc(0), retain: true, qos: 0 } : undefined;
-    client = mqtt.connect(url, { connectTimeout: 8000, reconnectPeriod: 5000, will, clientId: `ldc-${randomBytes(6).toString('hex')}` });
-    client.on('connect', () => {
+    const c = mqtt.connect(url, { connectTimeout: 8000, reconnectPeriod: 5000, will, clientId: `ldc-${randomBytes(6).toString('hex')}` });
+    client = c;
+    c.on('connect', () => {
+      if (c !== client) return;
       onLog(`Relais du groupe connecté (${new URL(url).hostname}).`);
       if (latest) send();
     });
-    client.on('error', () => {});
-    client.on('offline', () => {
-      // Try the other broker if this one keeps failing.
-      if (stopped) return;
-      client.end(true);
+    c.on('error', () => {});
+    c.on('offline', () => {
+      // Only the current connection may fall back to the other broker.
+      if (stopped || c !== client) return;
+      c.end(true);
       brokerIndex++;
-      setTimeout(connect, 2000);
+      setTimeout(() => c === client && connect(), 2000);
     });
   };
 
@@ -89,8 +91,14 @@ export async function startRelay({ group, onLog = () => {}, brokers = BROKERS })
     publish(playerId, message) {
       if (stopped) return;
       if (topic !== topicFor(group.id, playerId)) {
+        // New identity (the client got connected): clear the old retained message, reconnect
+        // with a last will on the new topic.
+        const old = client;
+        const oldTopic = topic;
         topic = topicFor(group.id, playerId);
-        client?.end(true);
+        client = null;
+        if (old?.connected && oldTopic) old.publish(oldTopic, Buffer.alloc(0), { retain: true }, () => old.end(true));
+        else old?.end(true);
         connect();
       }
       latest = message;
