@@ -4,6 +4,7 @@
 // are not calibrated on real matches yet, so pairwise terms are deliberately damped.
 
 import { ROLE_INDEX } from './stats-draft.mjs';
+import { isEngage, isPeel, isFrontline } from './static-attrs.mjs';
 
 // Prior strengths from study 07: a champion's patch winrate is pulled hard towards its
 // 30-day winrate (n0 15 000 for an unchanged champion), lane matchups less so.
@@ -19,6 +20,7 @@ const N0_SYN_OTHER = 5000;
 const GAMMA = { meta: 1, lane: 1, cross: 0.5, syn: 0.6, comp: 1 };
 const NO_FRONTLINE = -0.06; // logit, about −1.5 point for a team without any tank [assumption]
 const N0_TIME = 2000; // pseudo-games pulling a game-length winrate towards the champion's average
+const N0_ELO = 3000; // pseudo-games pulling the winrate at your elo towards the Emerald+ one
 const SR_QUEUES = new Set([400, 420, 430, 440, 480, 490, 700]);
 const MIN_ROLE_SHARE = 0.03;
 
@@ -26,7 +28,7 @@ const logit = (p) => Math.log(p / (1 - p));
 const sigmoid = (x) => 1 / (1 + Math.exp(-x));
 export const toPoints = (d, p = 0.5) => d * p * (1 - p) * 100;
 
-export function createDraftModel(stats, { difficulty = {}, info = {} } = {}) {
+export function createDraftModel(stats, { difficulty = {}, info = {}, elo = null } = {}) {
   const rec = (key, r) => stats.champs[key]?.roles?.[r] ?? [0, 0, 0, 0, null];
   const games30 = (key) => (stats.champs[key]?.roles ?? []).reduce((s, x) => s + x[0], 0);
   const share = (key, r) => {
@@ -43,7 +45,11 @@ export function createDraftModel(stats, { difficulty = {}, info = {} } = {}) {
     const [g30, w30, gp, wp] = rec(key, r);
     const prior = (w30 + 1) / (g30 + 2);
     const p = (wp + N0_META * prior) / (gp + N0_META);
-    return { value: logit(p) - logit(stats.roleWinrate[r]), variance: 4 / (g30 + N0_META), games: g30 };
+    const [ge, we] = elo?.champs?.[key]?.[r] ?? [0, 0];
+    if (!elo || !ge) return { value: logit(p) - logit(stats.roleWinrate[r]), variance: 4 / (g30 + N0_META), games: g30 };
+    // At your elo: the bracket's own winrate, pulled towards Emerald+ when it has few games.
+    const pe = (we + N0_ELO * p) / (ge + N0_ELO);
+    return { value: logit(pe) - logit(elo.roleWinrate[r]), variance: 4 / (ge + N0_ELO), games: ge };
   }
 
   // Record of `a` against or with `b`, averaged over both points of view.
@@ -129,7 +135,10 @@ export function createDraftModel(stats, { difficulty = {}, info = {} } = {}) {
     return GAMMA.comp * (-0.8 * Math.max(0, 0.25 - s) - 0.8 * Math.max(0, s - 0.85));
   }
 
-  const isFront = (key) => (info[key]?.tags ?? []).includes('Tank') || (info[key]?.defense ?? 0) >= 7;
+  const attrs = (key) => info[key]?.attrs;
+  const isFront = (key) => (attrs(key) ? isFrontline(attrs(key)) : false) || (info[key]?.tags ?? []).includes('Tank') || (info[key]?.defense ?? 0) >= 7;
+  const engage = (key) => isEngage(attrs(key));
+  const peel = (key) => isPeel(attrs(key));
 
   // A team of four or five without any tank pays a small price.
   function frontTerm(teamKeys) {
@@ -155,7 +164,7 @@ export function createDraftModel(stats, { difficulty = {}, info = {} } = {}) {
     return s < 0.2 ? 'Équipe presque full AP' : s > 0.85 ? 'Équipe presque full AD' : '';
   }
 
-  return { rec, share, roleTotals, meta, matchup, synergy, enemyAssignments, mastery, compTerm, compWarning, frontTerm, isFront, timing, rawLogit };
+  return { rec, share, roleTotals, meta, matchup, synergy, enemyAssignments, mastery, compTerm, compWarning, frontTerm, isFront, engage, peel, attrs, timing, rawLogit };
 }
 
 export { ROLE_INDEX, sigmoid, logit };

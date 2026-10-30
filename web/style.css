@@ -203,3 +203,11 @@ button:hover { border-color: var(--gold); }
 .add { display: flex; gap: 8px; }
 .add input { flex: 1; min-width: 0; font: 500 14px var(--body); color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
 .add input:focus { outline: none; border-color: var(--gold); }
+
+/* What a champion brings to the team (needs it fills) */
+.brings { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.brings span { font-size: 12px; font-weight: 700; color: var(--pos); border: 1px solid rgba(65, 209, 182, 0.35); border-radius: 999px; padding: 2px 8px; }
+
+.fixes { display: flex; flex-direction: column; gap: 6px; padding: 0 0 12px; }
+.fix { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.fix b { font-weight: 700; color: var(--pos); }

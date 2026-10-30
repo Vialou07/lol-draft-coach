@@ -190,6 +190,7 @@ function card(o, { flat = false, ref = false, best = false } = {}) {
     <div class="chips">${tagInTitle ? chips : `<span class="tag">${esc(o.tag)}</span>`}</div>
     ${gauge}
     ${o.warn ? `<div class="warn">${esc(o.warn)}</div>` : ''}
+    ${o.brings?.length ? `<div class="brings">${o.brings.map((b) => `<span>${esc(b)}</span>`).join('')}</div>` : ''}
     ${detail}
   </article>`;
 }
@@ -239,6 +240,10 @@ function renderAnalysis(an) {
   if (us) {
     rows.push(row('Dégâts', `<div class="teams"><div><span class="tname">Nous</span>${damageBar(us)}</div>${them ? `<div><span class="tname">Eux</span>${damageBar(them)}</div>` : ''}</div>`));
     rows.push(row('Tanks', `<span>Nous <b>${us.tanks}</b></span>${them ? `<span class="sep">·</span><span>Eux <b>${them.tanks}</b></span>` : ''}`));
+    if (us.engage != null) {
+      rows.push(row('Engage', `<span>Nous <b>${us.engage}</b></span>${them ? `<span class="sep">·</span><span>Eux <b>${them.engage}</b></span>` : ''}<span class="muted small">qui lance les fights</span>`));
+      rows.push(row('Protection', `<span>Nous <b>${us.peel}</b></span>${them ? `<span class="sep">·</span><span>Eux <b>${them.peel}</b></span>` : ''}<span class="muted small">qui protège ses carrys</span>`));
+    }
   }
   if (an.timing) {
     rows.push(row('Durée', `<div class="timing">${an.timing.map((t) => `<span class="tcell"><small>${t.label}</small>${verdict(t.delta, ['Nous', '=', 'Eux']).replace('Nous ', '').replace('Eux ', '')}</span>`).join('')}</div><div class="muted small">${timingVerdict(an.timing)}</div>`));
@@ -246,12 +251,15 @@ function renderAnalysis(an) {
   if (an.overall) {
     rows.push(row('La partie', `<span class="overall">${pct(an.overall.p)}</span><span class="muted small">chance de gagner · entre ${pct(an.overall.low)} et ${pct(an.overall.high)}</span>`));
   }
-  const warnings = [us?.warning, them?.warning ? `Eux : ${them.warning.toLowerCase()}` : '', us && us.size >= 4 && !us.tanks ? 'Aucun tank chez nous' : '']
+  const warnings = [us?.warning, them?.warning ? `Eux : ${them.warning.toLowerCase()}` : '', ...(an.needs ?? [])]
     .filter(Boolean)
     .map((w) => `<div class="warn">${esc(w)}</div>`)
     .join('');
+  const fixes = (an.fixes ?? [])
+    .map((f) => `<div class="fix">${mini(f.championId)}<span><b>${esc(champName(f.championId))}</b> ${esc(f.label.toLowerCase())} · ${pct(f.p)}</span></div>`)
+    .join('');
   return `<div class="label"><span>Analyse de la draft</span><b>avec ${esc(champName(an.championId))}</b></div>
-    <section class="analysis">${rows.join('')}${warnings}</section>`;
+    <section class="analysis">${rows.join('')}${warnings}${fixes ? `<div class="fixes"><span class="muted small">Pour combler :</span>${fixes}</div>` : ''}</section>`;
 }
 
 function renderAvoid(a) {

@@ -9,6 +9,8 @@ import { recommend } from './recommend.mjs';
 import { loadDraftStats } from './stats-draft.mjs';
 import { loadMayhemStats } from './stats-aram.mjs';
 import { loadChampionInfo } from './static-data.mjs';
+import { loadAttributes } from './static-attrs.mjs';
+import { loadEloStats, TIER_SLUGS, DEFAULT_TIER } from './stats-elo.mjs';
 import { loadGroup, groupLink, playerIdFor, startRelay } from './relay.mjs';
 import { assignBench } from './team.mjs';
 
@@ -67,7 +69,7 @@ const defaultStats = async ({ onLog, info }) => {
   return { draft, mayhem };
 };
 
-export async function startCompanion({ port = 4317, host, lockfile, onLog = () => {}, loadStats = defaultStats, loadInfo = loadChampionInfo, share = true } = {}) {
+export async function startCompanion({ port = 4317, host, lockfile, onLog = () => {}, loadStats = defaultStats, loadInfo = loadChampionInfo, loadAttrs = loadAttributes, loadElo = loadEloStats, share = true } = {}) {
   const state = {
     status: 'no-client',
     gameflow: 'None',
@@ -331,6 +333,20 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
       const known = Object.values(profile.champions).filter((c) => c.games || c.mastery).length;
       onLog(`Profil : ${profile.gamesRead} parties lues, ${known} champions connus, rang ${profile.rank ? `${profile.rank.tier} ${profile.rank.division}` : 'aucun'}`);
     }
+    refreshElo();
+  };
+
+  // Meta strength at the player's own rank (u.gg); unranked players get a broad bracket.
+  const refreshElo = async () => {
+    if (!stats.draft || !loadElo) return;
+    const tier = TIER_SLUGS[profile?.rank?.tier] ?? DEFAULT_TIER;
+    if (stats.elo?.tier === tier) return;
+    const elo = await loadElo(tier, stats.draft.version, { onLog });
+    if (!elo) return;
+    stats = { ...stats, elo };
+    onLog(`Méta à ton elo : ${tier} (${Object.keys(elo.champs).length} champions, patch ${elo.patch})`);
+    advise();
+    changed();
   };
 
   const connect = async () => {
@@ -394,9 +410,16 @@ export async function startCompanion({ port = 4317, host, lockfile, onLog = () =
         state.champions = Object.fromEntries(Object.entries(info).map(([key, c]) => [key, { name: c.name, alias: c.id }]));
       }
     })
+    .then(async () => {
+      // Engage, peel and frontline tags; a failure only removes those hints.
+      const attrs = loadAttrs ? await loadAttrs(Object.keys(info), state.assets.ddragon).catch(() => ({})) : {};
+      for (const [key, a] of Object.entries(attrs)) if (info[key]) info[key] = { ...info[key], attrs: a };
+      info = { ...info };
+    })
     .then(() => loadStats({ onLog, info }))
     .then((s) => {
       stats = s ?? {};
+      refreshElo();
       const count = (x) => (x ? `${x.version ?? '?'}, ${Object.keys(x.champs ?? {}).length} champions` : 'absentes');
       onLog(`Stats : draft ${count(stats.draft)} · ARAM du Chaos ${count(stats.mayhem)}`);
     })

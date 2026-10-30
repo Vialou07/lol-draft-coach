@@ -14,7 +14,7 @@ import { championInfo } from '../companion/static-data.mjs';
 const read = (p) => JSON.parse(readFileSync(new URL(p, import.meta.url), 'utf8'));
 const stats = { draft: read('./fixtures/draft-stats-mini.json'), mayhem: read('./fixtures/mayhem-stats.json') };
 const info = championInfo(read('./fixtures/ddragon-champions.json'));
-const startCompanion = (opts) => start({ ...opts, share: false, loadStats: async () => stats, loadInfo: async () => info });
+const startCompanion = (opts) => start({ ...opts, share: false, loadStats: async () => stats, loadInfo: async () => info, loadAttrs: null, loadElo: null });
 
 const waitFor = async (check, ms = 8000) => {
   const end = Date.now() + ms;

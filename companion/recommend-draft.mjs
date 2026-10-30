@@ -12,7 +12,7 @@ const GROUPS = ['Courte', 'Moyenne', 'Longue'];
 
 const phi = (z) => 0.5 * (1 + Math.tanh(0.7978845608 * (z + 0.044715 * z ** 3))); // normal CDF
 
-export function recommendDraft(draft, { stats, model, profile, pickable, names = {}, learning = [] }) {
+export function recommendDraft(draft, { stats, model, profile, pickable, names = {}, learning = [], eloLabel = '' }) {
   const me = draft.allies.find((p) => p.me);
   if (!me || !stats) return null;
   const myRole = ROLE_INDEX[me.role];
@@ -35,7 +35,7 @@ export function recommendDraft(draft, { stats, model, profile, pickable, names =
 
   if (me.championId) {
     const locked = scoreCandidate(ctx, base, { key: String(me.championId), r: roleOf(String(me.championId)) });
-    return { verb: 'Verrouillé', options: [option(locked, null)], reference: null, enemyRoles, analysis: analyze(ctx, locked), note: sourceNote(stats) };
+    return { verb: 'Verrouillé', options: [option(locked, null)], reference: null, enemyRoles, analysis: analyze(ctx, locked), note: sourceNote(stats, eloLabel) };
   }
 
   const owned = pickable?.length ? new Set(pickable.map(String)) : null;
@@ -109,8 +109,8 @@ export function recommendDraft(draft, { stats, model, profile, pickable, names =
     learn,
     enemyRoles,
     // The full draft analysis follows what you are looking at: your hover, else the first choice.
-    analysis: analyze(ctx, hover ?? best),
-    note: sourceNote(stats),
+    analysis: { ...analyze(ctx, hover ?? best), fixes: fixes(scored, shown) },
+    note: sourceNote(stats, eloLabel),
   };
 }
 
@@ -162,6 +162,9 @@ function analyze({ model, allies, enemies, assignments }, s) {
       size: list.length,
       physical: phys.length ? phys.reduce((a, b) => a + b, 0) / phys.length : null,
       tanks: list.filter((c) => model.isFront(c.key)).length,
+      engage: list.filter((c) => model.engage(c.key)).length,
+      peel: list.filter((c) => model.peel(c.key)).length,
+      cc: list.reduce((acc, c) => acc + (model.attrs(c.key)?.cc ?? 0), 0),
       warning: model.compWarning(phys),
       time,
     };
@@ -169,6 +172,13 @@ function analyze({ model, allies, enemies, assignments }, s) {
   const us = team(ours);
   const them = team(theirs);
   const timing = GROUPS.map((label, i) => ({ label, delta: pt(us.time[i] - (theirs.length ? them.time[i] : 0)) }));
+  // Plain-language needs, from both teams' make-up.
+  const needs = [];
+  if (us.size >= 3 && !us.engage) needs.push('Personne pour engager les fights chez vous');
+  if (them.engage >= 2 && !us.peel) needs.push('Ils ont de l’engage : il vous faut de la protection');
+  if (us.size >= 4 && !us.tanks) needs.push('Aucune frontline chez vous');
+  if (them.physical != null && them.physical >= 0.72 && theirs.length >= 3) needs.push('Ils sont très AD : l’armure paiera');
+  if (them.physical != null && them.physical <= 0.32 && theirs.length >= 3) needs.push('Ils sont très AP : la résistance magique paiera');
   const half = 1.2816 * Math.sqrt(s.variance) * s.p * (1 - s.p);
   return {
     championId: Number(s.key),
@@ -177,8 +187,20 @@ function analyze({ model, allies, enemies, assignments }, s) {
     duos,
     teams: { us: { ...us, time: undefined }, them: theirs.length ? { ...them, time: undefined } : null },
     timing: theirs.length || ours.length >= 3 ? timing : null,
+    needs,
     overall: { p: s.p, low: Math.max(0, s.p - half), high: Math.min(1, s.p + half) },
   };
+}
+
+// When the team lacks something, the best champion of your pool that fills it, if it is not
+// already among the cards.
+function fixes(scored, shown) {
+  return ['Apporte l’engage', 'Protège de leur engage', 'Ajoute une frontline']
+    .map((label) => {
+      const s = scored.find((x) => x.brings.includes(label));
+      return s && !shown.includes(s) ? { label, championId: Number(s.key), p: s.p } : null;
+    })
+    .filter(Boolean);
 }
 
 // The most negative factor explains why a champion is a trap here.
@@ -292,6 +314,13 @@ function scoreCandidate({ model, profile, allies, enemies, assignments, taken, s
   const front = model.frontTerm([...keys, c.key]) - model.frontTerm(keys);
   const mastery = model.mastery(c.key, profile);
 
+  // What the team is missing, and whether this champion fills it (shown, not scored yet).
+  const brings = [];
+  const theirEngage = enemies.filter(model.engage).length;
+  if (keys.length >= 2 && !keys.some(model.engage) && model.engage(c.key)) brings.push('Apporte l’engage');
+  if (theirEngage >= 2 && !keys.some(model.peel) && model.peel(c.key)) brings.push('Protège de leur engage');
+  if (keys.length >= 3 && !keys.some(model.isFront) && model.isFront(c.key)) brings.push('Ajoute une frontline');
+
   const terms = { meta: meta.value, lane, cross, syn, comp, front, mastery: mastery.value };
   const total = Object.values(terms).reduce((s, x) => s + x, 0);
   const p = sigmoid(base + total);
@@ -305,6 +334,7 @@ function scoreCandidate({ model, profile, allies, enemies, assignments, taken, s
     games: meta.games,
     mastery,
     compWarn: compWarn && !model.compWarning(phys) ? compWarn : '',
+    brings,
     worst: laneKnown < 0.5 && worst ? { name: names[worst.key] ?? worst.key, pts: toPoints(worst.value, p) } : null,
   };
 }
@@ -344,6 +374,7 @@ function option(s, reference) {
     games: s.mastery.games,
     tag: s.mastery.unknown ? '' : s.mastery.experience < 1 ? 'Nouveau' : s.mastery.games ? `${s.mastery.games} parties` : 'Ton pool',
     warn,
+    brings: s.brings ?? [],
     close: Boolean(s.close),
   };
 }
@@ -388,4 +419,4 @@ function banAdvice({ model, stats, myRole, taken, draft, profile }) {
   };
 }
 
-const sourceNote = (stats) => `Stats ${stats.source}, patch ${stats.version}. Chiffres pas encore validés sur de vrais matchs.`;
+const sourceNote = (stats, eloLabel) => `Matchups ${stats.source}, patch ${stats.version}${eloLabel ? ` · méta à ton elo (${eloLabel}, u.gg)` : ''}. Chiffres pas encore validés sur de vrais matchs.`;
